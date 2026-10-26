@@ -96,6 +96,20 @@ button:hover{border-color:var(--brass)}
 .empty{font-size:14px;color:var(--muted);margin:0}
 .idrow{display:grid;gap:6px}
 .idctl{display:flex;gap:8px;max-width:520px}
+details.fold{gap:0}
+details.fold>summary{list-style:none;cursor:pointer;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:-4px 0;padding:4px 0;border-radius:6px}
+details.fold>summary::-webkit-details-marker{display:none}
+details.fold>summary::after{content:"";width:8px;height:8px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(45deg);margin-left:auto;align-self:center;transition:transform .2s}
+details.fold:not([open])>summary::after{transform:rotate(-45deg)}
+details.fold>summary:focus-visible{outline:2px solid var(--brass);outline-offset:4px}
+.snum{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--brass);border:1px solid var(--brass);border-radius:999px;width:22px;height:22px;display:inline-grid;place-items:center;flex:none;align-self:center}
+.stitle{font-family:var(--display);font-size:20px;font-weight:400}
+.stitle .note{font-family:var(--body);font-size:12px;margin-left:4px}
+.ssum{font-size:13px;color:var(--muted);min-width:0}
+details.fold[open] .ssum{display:none}
+.fbody{display:grid;gap:16px;margin-top:16px;min-width:0}
+.sep{border:0;border-top:1px solid var(--line);margin:4px 0;width:100%}
+@media (prefers-reduced-motion:reduce){details.fold>summary::after{transition:none}}
 .live{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 6px;font-size:14px;font-weight:500;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
 .live .ldot{width:9px;height:9px;border-radius:50%;background:var(--muted)}
 .live[data-kind="ok"] .ldot{background:var(--ok)}
@@ -143,7 +157,9 @@ button:hover{border-color:var(--brass)}
     <p class="note" id="helperHint">PC에서 롤을 켜고 <a href="https://github.com/WandaDJ/lol-pick-reader#pc-도우미" style="color:inherit">PC 도우미</a>를 실행하면 픽창의 포지션, 픽, 밴이 자동으로 입력돼요. 챔피언 이름은 초성(예: ㄹㄴㅌ)으로도 입력할 수 있어요.</p>
   </header>
 
-  <section class="panel" aria-label="챔피언 입력">
+  <details class="panel fold" id="sec-input" open>
+    <summary><span class="snum">1</span><span class="stitle">픽창 입력</span><span class="ssum" id="sum-input"></span></summary>
+    <div class="fbody">
     <div class="pos">
       <span class="label">내 포지션</span>
       <div class="seg" id="posSeg" role="radiogroup" aria-label="내 포지션"></div>
@@ -168,47 +184,12 @@ button:hover{border-color:var(--brass)}
       <span style="display:grid;gap:2px"><span class="count" id="count"></span><span class="count" id="dataStatus">데이터: 추정 표 사용 중</span></span>
       <div class="btns"><button type="button" id="sample">랜덤 예시</button><button type="button" id="clear">초기화</button></div>
     </div>
-  </section>
+    </div>
+  </details>
 
-  <section class="panel" aria-live="polite" aria-label="시간대별 우세">
-    <span class="label">시간대별 우세 (아군 기준)</span>
-    <div class="phases" id="phases"></div>
-    <div class="chart" id="chart"></div>
-  </section>
-
-  <section class="panel" aria-live="polite" aria-label="라인별 우세">
-    <span class="label">라인별 우세 (20분 전, 맞라이너 기준)</span>
-    <div class="lanes" id="lanes"></div>
-    <span class="label">초반 전략</span>
-    <ul class="strat" id="strat"></ul>
-  </section>
-
-  <div class="two">
-    <section class="panel" aria-label="5:5 한타">
-      <span class="label">5:5 한타</span>
-      <div class="big" id="tfBig"></div>
-      <div id="tfVs" style="display:grid;gap:8px"></div>
-      <ul class="list" id="tfWhy"></ul>
-    </section>
-    <section class="panel" aria-label="운영 난이도">
-      <span class="label">운영 난이도 (아군)</span>
-      <div class="big" id="mcBig"></div>
-      <ul class="list" id="mcWhy"></ul>
-    </section>
-  </div>
-
-  <section class="panel" aria-label="게임 플랜">
-    <span class="label">이번 판 게임 플랜</span>
-    <ul class="list" id="plan"></ul>
-  </section>
-
-  <section class="panel" aria-label="밴 추천">
-    <span class="label" id="banTitle">밴 추천</span>
-    <div class="ranks" id="banRecs"></div>
-    <p class="note" id="banNote"></p>
-  </section>
-
-  <section class="panel" aria-label="추천 챔피언">
+  <details class="panel fold" id="sec-rec" open aria-live="polite">
+    <summary><span class="snum">2</span><span class="stitle">챔프 추천</span><span class="ssum" id="sum-rec"></span></summary>
+    <div class="fbody">
     <div class="bar-tools">
       <span class="label" id="rkTitle">추천 챔피언</span>
       <div class="seg" role="radiogroup" aria-label="추천 범위">
@@ -219,7 +200,53 @@ button:hover{border-color:var(--brass)}
     <label class="poolbox"><span class="note" id="poolLbl">내 챔프폭</span><input id="pool" placeholder="쉼표로 구분, 예: 쓰레쉬, 노틸러스" autocomplete="off"></label>
     <div class="ranks" id="ranks"></div>
     <p class="note">내 자리에 각 챔피언을 넣어보고 구간별 우세, 한타, 운영 난이도, 상대 라이너와의 라인전을 합쳐 순위를 매겨요. 이미 픽된 챔피언은 빠지고, 챔프폭은 이 브라우저에 저장돼요.</p>
-  </section>
+  
+    <hr class="sep">
+    <span class="label" id="banTitle">밴 추천</span>
+    <div class="ranks" id="banRecs"></div>
+    <p class="note" id="banNote"></p>
+    </div>
+  </details>
+
+  <details class="panel fold" id="sec-lanes" open aria-live="polite">
+    <summary><span class="snum">3</span><span class="stitle">라인별 우세 <span class="note">20분 전, 맞라이너 기준</span></span><span class="ssum" id="sum-lanes"></span></summary>
+    <div class="fbody">
+    <div class="lanes" id="lanes"></div>
+    <span class="label">초반 전략</span>
+    <ul class="strat" id="strat"></ul>
+    </div>
+  </details>
+
+  <details class="panel fold" id="sec-phase" open aria-live="polite">
+    <summary><span class="snum">4</span><span class="stitle">시간대별 우세 <span class="note">아군 기준</span></span><span class="ssum" id="sum-phase"></span></summary>
+    <div class="fbody">
+    <div class="phases" id="phases"></div>
+    <div class="chart" id="chart"></div>
+    </div>
+  </details>
+
+  <details class="panel fold" id="sec-tf" open aria-live="polite">
+    <summary><span class="snum">5</span><span class="stitle">5:5 한타</span><span class="ssum" id="sum-tf"></span></summary>
+    <div class="fbody">
+      <div class="big" id="tfBig"></div>
+      <div id="tfVs" style="display:grid;gap:8px"></div>
+      <ul class="list" id="tfWhy"></ul>
+    </div>
+  </details>
+
+  <details class="panel fold" id="sec-plan" open aria-live="polite">
+    <summary><span class="snum">6</span><span class="stitle">게임 플랜</span><span class="ssum" id="sum-plan"></span></summary>
+    <div class="fbody">
+      <span class="label">운영 난이도 (아군)</span>
+      <div class="big" id="mcBig"></div>
+      <ul class="list" id="mcWhy"></ul>
+    
+    <hr class="sep">
+    <span class="label">구간별로 할 일</span>
+    <ul class="list" id="plan"></ul>
+    </div>
+  </details>
+
 
   <p class="note" id="srcNote"><b>데이터 출처 안내:</b> 모든 수치는 실제 경기 통계가 아니라, 챔피언별 초반·중반·후반 강도와 한타 성향을 1~5점으로 직접 매긴 추정 표로 계산해요. 패치 변화도 반영되지 않아요. 방향을 잡는 참고용으로 쓰시고, 상성이 애매할 땐 op.gg 같은 통계 사이트에서 한 번 더 확인하세요.</p>
   <footer class="note" style="display:grid;gap:4px">
@@ -430,6 +457,8 @@ function renderLanes(an,ap,en){
       return `<span class="t">${PH[i]}</span><div class="dv"><i style="left:${left}%;width:${w}%;background:${stCol(v)}"></i></div><span class="v" style="color:${stCol(v)}">${v}%</span>`}).join('');
     return `<div class="ln"><span class="nm" style="color:${stCol(l.avg)}">${l.nm}</span><span class="who"><b>${l.ally}</b> vs ${l.enemy} · <span style="color:${stCol(l.avg)}">${stTxt(Math.round(l.avg))}</span>${l.missing?' · 정보 부족':l.mineWait?' · 내 픽 반영 전':''}</span><div class="bars">${bars}</div><span class="tip">${laneTip(l)}</span></div>`;
   }).join('');
+  const up=L.filter(l=>l.avg>=56).map(l=>l.nm),dn=L.filter(l=>l.avg<=44).map(l=>l.nm);
+  $('sum-lanes').textContent=[up.length?'유리 '+up.join(', '):'',dn.length?'불리 '+dn.join(', '):''].filter(Boolean).join(' · ')||'비슷함';
   $('strat').innerHTML=strategy(L).map(t=>`<li>${t}</li>`).join('');
 }
 
@@ -452,6 +481,7 @@ function render(){
   $('badMsg').hidden=!bad.length;
   $('badMsg').textContent=bad.length?`목록에 없는 이름: ${bad.join(', ')} (자동완성에서 골라주세요)`:'';
   const filled=an.filter(Boolean).length+en.filter(Boolean).length;
+  $('sum-input').textContent=`${LANES[MY]} · ${filled}/10 입력 · 밴 ${banned().size}개`;
   $('count').textContent=`입력 ${filled} / 10 · 비어 있는 칸은 평균값으로 계산`;
   const r=analyze(an,ap,en);
   const peak=r.adv.indexOf(Math.max(...r.adv));
@@ -459,8 +489,10 @@ function render(){
     const left=v>=50?50:v,width=Math.abs(v-50);
     return `<div class="ph${i===peak&&v>52?' peak':''}"><span class="t">${PH[i]}</span><span class="pct" style="color:${stCol(v)}">${v}%</span><div class="dv"><i style="left:${left}%;width:${width}%;background:${stCol(v)}"></i></div><span class="st" style="color:${stCol(v)}">${stTxt(v)}</span></div>`}).join('');
   $('chart').innerHTML=svgChart(r.adv);
+  $('sum-phase').textContent=r.adv.map((v,i)=>`${PH[i]} ${v}%`).join(' · ');
   renderLanes(an,ap,en);
 
+  $('sum-tf').textContent=`${r.tfAdv}% · ${stTxt(r.tfAdv)}`;
   $('tfBig').innerHTML=`<b style="color:${stCol(r.tfAdv)}">${r.tfAdv}%</b><span class="pill" style="color:${stCol(r.tfAdv)}">${stTxt(r.tfAdv)}</span>`;
   const mx=Math.max(r.ta,r.te,1);
   $('tfVs').innerHTML=[['아군',r.ta,'var(--ally)'],['상대',r.te,'var(--enemy)']].map(([n,v,c])=>`<div class="vs"><span>${n}</span><span class="bar"><i style="width:${Math.round(v/mx*100)}%;background:${c}"></i></span><span class="v">${v.toFixed(0)}</span></div>`).join('');
@@ -470,6 +502,7 @@ function render(){
   $('tfWhy').innerHTML=tw.map(t=>`<li>${t}</li>`).join('');
 
   const mcL=r.mc<35?['쉬움','var(--ok)']:r.mc<60?['보통','var(--warn)']:['어려움','var(--enemy)'];
+  $('sum-plan').textContent=`운영 ${mcL[0]}`;
   $('mcBig').innerHTML=`<b style="color:${mcL[1]}">${mcL[0]}</b><span class="pill" style="color:${mcL[1]}">난이도 ${r.mc}</span>`;
   $('mcWhy').innerHTML=r.mcWhy.map(t=>`<li>${t}</li>`).join('');
   $('plan').innerHTML=plan(r).map(t=>`<li>${t}</li>`).join('');
@@ -483,6 +516,7 @@ function render(){
   const rows=cands.map(c=>scoreCand(c,ctx,foe)).sort((a,b)=>b.score-a.score).slice(0,12);
   $('ranks').innerHTML=rows.length?rows.map((o,i)=>`<div class="rank"><span class="n">${i+1}</span><span class="name">${o.c}${o.mine?`<span class="badge">${o.games?o.games+'판':o.mastery?'숙련도':'챔프폭'}</span>`:''}</span><span class="bar"><i style="width:${Math.round(o.score)}%"></i></span><span class="v">${Math.round(o.score)}</span><span class="why">${o.w}</span><button type="button" class="x" data-ban="${o.c}" aria-label="${o.c} 밴됨으로 표시">밴됨</button></div>`).join('')
     :`<p class="empty">${ONLY_POOL?`${lane} 챔프폭에 남은 챔피언이 없어요. 위 칸에 챔프폭을 넣거나 '전체'로 바꿔보세요.`:'추천할 챔피언이 없어요.'}</p>`;
+  $('sum-rec').textContent=rows.length?`1위 ${rows[0].c} ${Math.round(rows[0].score)}점`+(rows[1]?` · 2위 ${rows[1].c}`:''):'';
   renderBanRecs(ctx,foe);
   renderBanChips();
 }
@@ -603,7 +637,7 @@ function inferLanes(list,occ){
 }
 
 // ---- PC 도우미 연결 (도우미가 띄운 http://127.0.0.1:27150 에서만 동작)
-const LOCAL=/^(127\.0\.0\.1|localhost)$/.test(location.hostname);
+const LOCAL=/^(127\.0\.0\.1|localhost)$/.test(location.hostname)&&location.port==='27150';
 let AUTO=true,lastAuto={},liveSig='';
 function showLive(text,kind){$('live').hidden=false;$('liveText').textContent=text;$('live').dataset.kind=kind;}
 function ensureChamp(name){if(!name)return '';const k=find(name);if(k)return k;D[name]=[3,3,3,3,''];fillNames();return name;}
@@ -634,6 +668,10 @@ async function pollHelper(){
 }
 $('autoOn').addEventListener('change',()=>{AUTO=$('autoOn').checked;if(AUTO){liveSig='';lastAuto={};}});
 if(LOCAL){$('helperHint').hidden=true;pollHelper();}
+document.querySelectorAll('details.fold').forEach(d=>{
+  const k='pr.fold.'+d.id,v=store.get(k);if(v==='0')d.open=false;
+  d.addEventListener('toggle',()=>store.set(k,d.open?'1':'0'));
+});
 
 LANES.forEach((l,i)=>{$('a'+i).addEventListener('input',render);$('e'+i).addEventListener('input',render);$('p'+i).addEventListener('change',render);});
 $('posSeg').addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;MY=+b.dataset.i;applyPos();render();});
