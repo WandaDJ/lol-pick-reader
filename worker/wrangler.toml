@@ -1,0 +1,8 @@
+# 명령줄로 배포할 때만 필요해요: npx wrangler deploy (worker 폴더에서)
+# 키 등록: npx wrangler secret put RIOT_API_KEY
+name = "lol-pick-reader"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+ALLOWED_ORIGIN = "https://wandadj.github.io"

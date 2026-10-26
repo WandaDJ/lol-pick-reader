@@ -6,6 +6,7 @@
 - 5:5 한타 구도 (이니시, 앞라인, 보호, 물리/마법 피해 비율)
 - 아군 운영 난이도와 이번 판 게임 플랜
 - 내 포지션을 고르면 지금 픽창 상황에 맞는 추천 챔피언 (내 챔프폭 표시·필터 가능)
+- `이름#태그`로 내 최근 랭크 기록을 불러와 포지션별 챔프폭 자동 채우기
 
 **바로 쓰기:** https://wandadj.github.io/lol-pick-reader/
 
@@ -51,9 +52,38 @@ git add data/stats.json && git commit -m "통계 갱신" && git push
 2. 이름 `RIOT_API_KEY`, 값에 키 입력
 3. **Actions → 통계 갱신 → Run workflow**로 바로 돌리거나, 매주 월요일 새벽에 자동 실행돼요.
 
+## 아이디로 챔프폭 불러오기 (Cloudflare Worker)
+
+페이지에 `이름#태그`를 넣으면 최근 랭크 15판과 챔피언 숙련도를 보고 포지션별 챔프폭을 자동으로 채워요. Riot API 키를 페이지에 넣으면 누구나 볼 수 있어서, 키를 숨겨주는 작은 중계 서버(`worker/worker.js`)를 Cloudflare Workers 무료 플랜에 올려서 써요.
+
+### 대시보드로 배포하기 (설치 없이)
+1. [dash.cloudflare.com](https://dash.cloudflare.com/)에 가입하고 **Workers & Pages → Create → Create Worker**
+2. 이름을 `lol-pick-reader`로 하고 **Deploy** → **Edit code**에서 기본 코드를 지우고 `worker/worker.js` 내용을 붙여넣은 뒤 **Deploy**
+3. Worker의 **Settings → Variables and Secrets**에서 추가
+   - `RIOT_API_KEY` : 종류 **Secret**, 값은 Riot API 키
+   - `ALLOWED_ORIGIN` : 종류 **Text**, 값 `https://wandadj.github.io`
+4. Worker 주소(`https://lol-pick-reader.<계정>.workers.dev`)를 `data/config.json`의 `poolApi`에 넣고 커밋
+
+```json
+{ "poolApi": "https://lol-pick-reader.<계정>.workers.dev" }
+```
+
+### 명령줄로 배포하기 (Node.js가 있으면)
+```bash
+cd worker
+npx wrangler deploy
+npx wrangler secret put RIOT_API_KEY
+```
+
+### 알아두기
+- 한 번 불러올 때 Riot API를 약 18번 호출해요. 같은 아이디는 1시간 동안 캐시돼요.
+- Personal API Key 기본 한도(2분에 100회)로는 2분에 5명 정도 불러올 수 있어요. 사용자가 많아지면 Riot에 Production Key를 신청하세요.
+- 키가 만료되면 페이지에 "서버의 Riot API 키가 만료됐거나 잘못됐어요"라고 떠요. Worker의 `RIOT_API_KEY`만 바꾸면 돼요.
+
 ## 테스트
 ```bash
-python -m unittest discover tests
+python -m unittest discover tests   # 통계 집계
+node worker/worker.test.mjs         # 챔프폭 중계 서버 (가짜 Riot 응답)
 ```
 
 ## 알려진 한계

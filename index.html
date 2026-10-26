@@ -94,6 +94,12 @@ button:hover{border-color:var(--brass)}
 .rank{grid-template-columns:22px 150px minmax(0,1fr) 40px}
 @media (max-width:480px){.rank{grid-template-columns:20px 118px minmax(0,1fr) 34px}}
 .empty{font-size:14px;color:var(--muted);margin:0}
+.idrow{display:grid;gap:6px}
+.idctl{display:flex;gap:8px;max-width:520px}
+.idctl input{flex:1}
+.idctl button{white-space:nowrap}
+.idctl button:disabled{opacity:.5;cursor:default}
+#idStatus.err{color:var(--enemy)}
 @media (prefers-reduced-motion:reduce){.dv i,.rank .bar i{transition:none}}
 </style>
 </head>
@@ -109,6 +115,11 @@ button:hover{border-color:var(--brass)}
       <span class="label">내 포지션</span>
       <div class="seg" id="posSeg" role="radiogroup" aria-label="내 포지션"></div>
     </div>
+    <form class="idrow" id="idForm">
+      <label class="label" for="riotId">내 아이디로 챔프폭 불러오기</label>
+      <div class="idctl"><input id="riotId" placeholder="이름#태그 (예: Hide on bush#KR1)" autocomplete="off" maxlength="42"><button type="submit" id="idBtn">불러오기</button></div>
+      <span class="count" id="idStatus"></span>
+    </form>
     <div class="teams">
       <div class="team" id="allyBox">
         <div class="team-head"><span class="dot" style="background:var(--ally)"></span>아군</div>
@@ -388,9 +399,10 @@ function render(){
     if(foe){const d=pc.v[0]-pf.v[0];w.push(`vs ${foe} 라인전 ${d>0?'유리':d<0?'불리':'비슷'}`);}
     w.push(`팀 평균 우세 ${avg-base>=0?'+':''}${(avg-base).toFixed(1)} · 한타 ${x.tfAdv}%`);
     w.push(pc.src==='stat'?`통계 ${pc.games}판 · 승률 ${(pc.wr*100).toFixed(1)}%`:'추정값');
-    return {c,score,w:w.join(' · '),mine:pool.has(c)};
+    const det=poolDetail()[c];
+    return {c,score,w:w.join(' · '),mine:pool.has(c),games:det&&det.games};
   }).sort((a,b)=>b.score-a.score).slice(0,12);
-  $('ranks').innerHTML=rows.length?rows.map((o,i)=>`<div class="rank"><span class="n">${i+1}</span><span class="name">${o.c}${o.mine?'<span class="badge">챔프폭</span>':''}</span><span class="bar"><i style="width:${Math.round(o.score)}%"></i></span><span class="v">${Math.round(o.score)}</span><span class="why">${o.w}</span></div>`).join('')
+  $('ranks').innerHTML=rows.length?rows.map((o,i)=>`<div class="rank"><span class="n">${i+1}</span><span class="name">${o.c}${o.mine?`<span class="badge">${o.games?o.games+'판':'챔프폭'}</span>`:''}</span><span class="bar"><i style="width:${Math.round(o.score)}%"></i></span><span class="v">${Math.round(o.score)}</span><span class="why">${o.w}</span></div>`).join('')
     :`<p class="empty">${ONLY_POOL?`${lane} 챔프폭에 남은 챔피언이 없어요. 위 칸에 챔프폭을 넣거나 '전체'로 바꿔보세요.`:'추천할 챔피언이 없어요.'}</p>`;
 }
 
@@ -433,6 +445,47 @@ async function loadStats(){
   }
 }
 loadStats();
+
+// ---- 아이디로 챔프폭 불러오기 (Cloudflare Worker 중계)
+let POOL_API='';
+function poolDetail(){try{return JSON.parse(store.get('pr.detail.'+LANES[MY])||'{}')}catch(e){return {}}}
+function idStatus(t,err){$('idStatus').textContent=t;$('idStatus').classList.toggle('err',!!err);}
+async function loadConfig(){
+  try{const r=await fetch('data/config.json',{cache:'no-cache'});if(r.ok){POOL_API=String((await r.json()).poolApi||'').replace(/\/$/,'');}}catch(e){}
+  $('idBtn').disabled=!POOL_API;
+  if(!POOL_API)idStatus('챔프폭 불러오기 서버가 아직 연결되지 않았어요. 아래 칸에 직접 적어도 돼요.');
+  const saved=store.get('pr.riotId');if(saved)$('riotId').value=saved;
+}
+$('idForm').addEventListener('submit',async ev=>{
+  ev.preventDefault();
+  const id=$('riotId').value.trim();
+  if(!/^.+#.+$/.test(id)){idStatus("'이름#태그' 형식으로 입력하세요.",true);return;}
+  if(!POOL_API)return;
+  $('idBtn').disabled=true;idStatus('최근 랭크 경기를 확인하는 중이에요. 10초 정도 걸려요.');
+  try{
+    const r=await fetch(`${POOL_API}/pool?riotId=${encodeURIComponent(id)}`);
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(j.error||`불러오지 못했어요 (${r.status})`);
+    store.set('pr.riotId',id);
+    const lanesFound=[];
+    for(const ln of LANES){
+      const played=(j.positions&&j.positions[ln])||[];
+      const names=[],det={};
+      for(const row of played){const k=find(row.name)||row.name;if(!names.includes(k)){names.push(k);det[k]={games:row.games,wins:row.wins};}}
+      // 숙련도 상위 챔피언 중 이 포지션 챔피언을 뒤에 덧붙임 (주 포지션만)
+      if(ln===j.mainPosition)for(const m of (j.mastery||[]).slice(0,15)){const k=find(m.name);if(k&&R[ln].includes(k)&&!names.includes(k))names.push(k);}
+      if(!names.length)continue;
+      lanesFound.push(`${ln} ${played.reduce((s,x)=>s+x.games,0)}판`);
+      store.set('pr.pool.'+ln,names.join(', '));store.set('pr.detail.'+ln,JSON.stringify(det));
+    }
+    if(j.mainPosition){MY=LANES.indexOf(j.mainPosition);}
+    applyPos();ONLY_POOL=true;applyFilter();render();
+    const top=(j.positions&&j.mainPosition&&j.positions[j.mainPosition]||[]).slice(0,3).map(x=>`${x.name} ${x.games}판`).join(', ');
+    idStatus(lanesFound.length?`${j.riotId} · 최근 랭크 ${j.matchesChecked}판 확인 · 주 포지션 ${j.mainPosition}${top?' ('+top+')':''}`:`${j.riotId} · 최근 랭크 경기가 없어 챔프폭을 채우지 못했어요.`);
+  }catch(e){idStatus(e.message||'불러오지 못했어요.',true);}
+  finally{$('idBtn').disabled=!POOL_API;}
+});
+loadConfig();
 </script>
 </body>
 </html>
