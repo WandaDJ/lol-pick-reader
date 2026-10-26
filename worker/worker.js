@@ -19,6 +19,10 @@
  *   POOL_KV         (KV 바인딩)    아이디별 경기를 최근 300판까지 쌓아둬요.
  *                                  없으면 매번 최근 35판만 봐요.
  *
+ * POST /ingest  { riotId, games: [{ id, q, d, t, lane, c, w }] }
+ *   PC 도우미가 읽은 클라이언트 전적(내 기록만)을 받아서 쌓아요. Riot API는 쓰지 않아요.
+ *   등록된 아이디만 받고, 같은 경기를 서버가 Riot API로 받은 기록이 있으면 그걸 우선해요.
+ *
  * 수집은 누군가 페이지에서 불러오기를 누를 때만 해요. 한 번에 새 경기를 최대 35판 받고,
  * 페이지가 1분마다 이어서 요청해서 300판까지 채워요.
  *
@@ -50,7 +54,7 @@ function corsHeaders(request, env) {
   const allowed = String(env.ALLOWED_ORIGIN || "").split(",").map((s) => s.trim()).filter(Boolean);
   const ok = allowed.includes(origin) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
   return ok
-    ? { "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Methods": "GET, OPTIONS", Vary: "Origin" }
+    ? { "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type", "Access-Control-Allow-Private-Network": "true", Vary: "Origin" }
     : { Vary: "Origin" };
 }
 
@@ -171,6 +175,40 @@ export async function syncUser(env, puuid, budget, names) {
   return { known, pending };
 }
 
+const POOL_QUEUE_IDS = new Set([400, 420, 430, 440, 480, 490]);
+const LANES_OK = new Set(Object.values(POS));
+
+/** PC 도우미가 보낸 클라이언트 기록 합치기 */
+export async function ingest(env, body) {
+  const id = parseRiotId(body && body.riotId);
+  if (!id) throw new HttpError(400, "아이디 형식이 잘못됐어요.");
+  if (!String(env.ALLOWED_RIOT_IDS || "").trim() || !isAllowed(env, id)) {
+    throw new HttpError(403, "등록된 아이디만 서버에 기록을 저장할 수 있어요.");
+  }
+  if (!env.POOL_KV) throw new HttpError(500, "서버에 저장소(POOL_KV)가 연결되지 않았어요.");
+  const games = Array.isArray(body.games) ? body.games.slice(0, 100) : [];
+  const account = await getAccount(env, id);
+  const kvKey = `pool:${account.puuid}`;
+  const stored = (await env.POOL_KV.get(kvKey, "json")) || { matches: {} };
+  const known = stored.matches;
+  let added = 0;
+  for (const g of games) {
+    if (!g || typeof g.id !== "string" || !/^[A-Z0-9]{2,5}_\d{1,15}$/.test(g.id) || g.id in known) continue;
+    const champ = typeof g.c === "string" ? g.c.slice(0, 24) : "";
+    if (!champ) continue;
+    const t = Number(g.t) || 0, d = Number(g.d) || 0, q = Number(g.q);
+    if (!POOL_QUEUE_IDS.has(q) || d < 15 * 60) known[g.id] = { skip: true, t, src: "client" };
+    else known[g.id] = { lane: LANES_OK.has(g.lane) ? g.lane : null, champ, win: !!g.w, t, src: "client" };
+    added += 1;
+  }
+  if (added) {
+    const keep = new Set(Object.keys(known).sort((a, b) => matchNum(b) - matchNum(a)).slice(0, KEEP_MATCHES));
+    for (const m of Object.keys(known)) if (!keep.has(m)) delete known[m];
+    await env.POOL_KV.put(kvKey, JSON.stringify({ ...stored, matches: known, updated: Date.now() }));
+  }
+  return { added, stored: Object.keys(known).length };
+}
+
 export async function buildPool(env, riotId) {
   const id = parseRiotId(riotId);
   if (!id) throw new HttpError(400, "아이디는 '이름#태그' 형식으로 입력하세요. 예: Hide on bush#KR1");
@@ -188,8 +226,10 @@ export async function buildPool(env, riotId) {
   const positions = {};
   const posGames = {};
   let total = 0, skipped = 0;
+  const unknownLane = [];
   for (const r of Object.values(known)) {
     if (r.skip) { skipped += 1; continue; }
+    if (!r.lane) { unknownLane.push({ name: r.champ, win: !!r.win }); continue; }  // 포지션 없는 클라이언트 기록
     total += 1;
     const list = (positions[r.lane] ||= []);
     let row = list.find((x) => x.name === r.champ);
@@ -204,8 +244,9 @@ export async function buildPool(env, riotId) {
   return {
     riotId: `${account.gameName}#${account.tagLine}`,
     mainPosition,
-    totalGames: total,
+    totalGames: total + unknownLane.length,
     skippedGames: skipped,
+    unknownLane,
     pending,
     stored: !!env.POOL_KV,
     positions,
@@ -223,12 +264,26 @@ export default {
     const cors = corsHeaders(request, env);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
     const url = new URL(request.url);
+    const cache = typeof caches !== "undefined" ? caches.default : null;
+    const cacheKeyFor = (rid) => new Request(`https://cache.local/pool/${encodeURIComponent(String(rid || "").trim().toLowerCase())}`);
+    if (request.method === "POST" && url.pathname === "/ingest") {
+      try {
+        const text = await request.text();
+        if (text.length > 64 * 1024) throw new HttpError(413, "한 번에 보내는 기록이 너무 많아요.");
+        const body = JSON.parse(text || "{}");
+        const out = await ingest(env, body);
+        if (cache && out.added) ctx.waitUntil(cache.delete(cacheKeyFor(body.riotId)));
+        return json(out, 200, cors);
+      } catch (e) {
+        const status = e instanceof HttpError ? e.status : 400;
+        return json({ error: e instanceof HttpError ? e.message : "요청 형식이 잘못됐어요." }, status, cors);
+      }
+    }
     if (request.method !== "GET" || url.pathname !== "/pool") return json({ error: "GET /pool?riotId=이름%23태그" }, 404, cors);
     if (!env.RIOT_API_KEY) return json({ error: "서버에 RIOT_API_KEY가 설정되지 않았어요." }, 500, cors);
 
     const riotId = url.searchParams.get("riotId") || "";
-    const cacheKey = new Request(`https://cache.local/pool/${encodeURIComponent(riotId.trim().toLowerCase())}`);
-    const cache = typeof caches !== "undefined" ? caches.default : null;
+    const cacheKey = cacheKeyFor(riotId);
     if (cache) {
       const hit = await cache.match(cacheKey);
       if (hit) return json(await hit.json(), 200, { ...cors, "X-Cache": "HIT" });

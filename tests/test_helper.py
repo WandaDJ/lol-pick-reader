@@ -105,6 +105,31 @@ class PoolTest(unittest.TestCase):
         self.assertEqual(out["unknownLane"], [{"name": "쓰레쉬", "win": True}])
         self.assertEqual(out["skipped"], {"mode": 1, "short": 1})
 
+    def test_accumulate(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            old_home = h.Path.home
+            h.Path.home = staticmethod(lambda: h.Path(d))
+            try:
+                def batch(start, n):
+                    return [{"gameId": 1000 + i, "platformId": "KR", "queueId": 420, "gameDuration": 1800, "gameCreation": 10**12 + i,
+                             "participants": [{"championId": 412, "stats": {"win": i % 2 == 0},
+                                               "timeline": {"lane": "BOTTOM", "role": "SUPPORT"}}]} for i in range(start, start + n)]
+                s1, f1 = h.accumulate_client_games("me", batch(0, 20))       # 첫 실행: 20판
+                s2, f2 = h.accumulate_client_games("me", batch(15, 20))      # 다음 실행: 5판 겹치고 15판 새로
+                self.assertEqual(len(s1), 20)
+                self.assertEqual(len(s2), 35)
+                self.assertIn("KR_1034", s2)
+                recs = h.client_records(f2, NAMES)
+                self.assertEqual(recs[0], {"id": "KR_1015", "q": 420, "d": 1800, "t": 10**12 + 15, "lane": "SUP", "c": "쓰레쉬", "w": False})
+                many = batch(100, 400)
+                s3, _ = h.accumulate_client_games("me", many)
+                self.assertEqual(len(s3), 300)                                 # 최근 300판만 유지
+                self.assertIn("KR_1499", s3)
+                self.assertNotIn("KR_1000", s3)
+            finally:
+                h.Path.home = old_home
+
     def test_match_lane(self):
         self.assertEqual(h.match_lane({"lane": "BOTTOM", "role": "DUO_CARRY"}), "ADC")
         self.assertEqual(h.match_lane({"lane": "JUNGLE", "role": "NONE"}), "JGL")

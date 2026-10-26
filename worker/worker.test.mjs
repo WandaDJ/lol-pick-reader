@@ -92,7 +92,30 @@ assert.equal(denied.status, 403);
 assert.match((await denied.json()).error, /등록된 아이디만/);
 assert.equal(calls, 0, "허용 안 된 아이디는 Riot API를 호출하지 않아야 함");
 
-// 4) 오류와 CORS
+// 4) 도우미가 보낸 클라이언트 기록 합치기
+const envIn = { ...envLimited, ALLOWED_RIOT_IDS: "동재#KR1", POOL_KV: new FakeKV() };
+const post = (env, body, origin = "http://127.0.0.1:27150") => worker.fetch(new Request("https://w.example/ingest",
+  { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify(body) }), env, ctx);
+const cg = [
+  { id: "KR_1000", q: 420, d: 1800, t: 1, lane: "SUP", c: "쓰레쉬", w: true },      // 서버가 나중에 받을 경기와 같은 ID
+  { id: "KR_5", q: 490, d: 1600, t: 2, lane: null, c: "샤코", w: true },             // 포지션 없음 → 페이지가 추정
+  { id: "KR_6", q: 1700, d: 1200, t: 3, lane: null, c: "파이크", w: false },        // 아레나 → 제외
+  { id: "bad id", q: 420, d: 1800, lane: "SUP", c: "x", w: true },                 // 형식 오류 → 무시
+];
+calls = 0;
+let r = await post(envIn, { riotId: "동재#KR1", games: cg });
+assert.equal(r.status, 200);
+assert.deepEqual(await r.json(), { added: 3, stored: 3 });
+assert.ok(calls <= 1, "기록 저장에는 Riot API를 쓰지 않음 (계정 조회 1번만)");
+assert.equal((await (await post(envIn, { riotId: "동재#KR1", games: cg })).json()).added, 0);   // 중복은 안 늘어남
+assert.equal((await post(envIn, { riotId: "모르는사람#KR1", games: cg })).status, 403);
+assert.equal((await post({ ...envIn, ALLOWED_RIOT_IDS: "" }, { riotId: "동재#KR1", games: cg })).status, 403);  // 목록 없으면 저장 안 받음
+const merged = await (await call(envIn, "동재#KR1")).json();
+assert.deepEqual(merged.unknownLane, [{ name: "샤코", win: true }]);
+assert.equal(merged.totalGames, 36);   // 클라이언트 KR_1000 + 서버 새 35판(다시하기 1판 제외 34) + 포지션 없는 1판
+assert.equal(r.headers.get("Access-Control-Allow-Origin"), "http://127.0.0.1:27150");
+
+// 5) 오류와 CORS
 let res = await call(envNoKV, "없는사람#KR1");
 assert.equal(res.status, 404);
 assert.match((await res.json()).error, /찾을 수 없어요/);
@@ -100,4 +123,4 @@ assert.equal((await call(envNoKV, "형식오류")).status, 400);
 res = await call(envNoKV, "동재#KR1", "https://evil.example");
 assert.equal(res.headers.get("Access-Control-Allow-Origin"), null);
 
-console.log("ok: 누적 35→70→75판, KV 없이 35판, 아이디 제한, 오류·CORS 확인");
+console.log("ok: 누적 35→70→75판, KV 없이 35판, 아이디 제한, 클라이언트 기록 합치기, 오류·CORS 확인");

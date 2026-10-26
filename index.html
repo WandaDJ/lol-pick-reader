@@ -299,7 +299,7 @@ const PH=["0~10분","10~20분","20~30분","30분 이후"];
 const $=id=>document.getElementById(id);
 const norm=s=>s.replace(/\s+/g,'').toLowerCase();
 // 페이지를 고칠 때마다 올리는 버전 (날짜.번호)
-const PAGE_VERSION='2026.10.27.5';
+const PAGE_VERSION='2026.10.27.6';
 let HELPER_VER=null;
 function updateVer(){
   const el=document.getElementById('verLine');if(!el)return;
@@ -890,7 +890,7 @@ function applyPool(j){
     const sk=j.skipped||{},ex=[];
     if(sk.mode)ex.push(`칼바람·아레나 등 ${sk.mode}판`);
     if(sk.short)ex.push(`다시하기·15분 미만 ${sk.short}판`);
-    detail+=` · 클라이언트 전적 ${j.checkedGames||j.totalGames}판 중 ${j.totalGames}판 사용 (랭크 ${j.rankedGames||0}판${guessed?`, 포지션 추정 ${guessed}판`:''})${ex.length?' · 제외: '+ex.join(', '):''}`;
+    detail+=` · 이 PC에 쌓인 전적 ${j.checkedGames||j.totalGames}판 중 ${j.totalGames}판 사용 (랭크 ${j.rankedGames||0}판${guessed?`, 포지션 추정 ${guessed}판`:''})${ex.length?' · 제외: '+ex.join(', '):''}`;
   }
   idStatus(lanesFound.length?`${j.riotId} · ${kind} ${j.totalGames}판 기준 · 주 포지션 ${j.mainPosition}${top?' ('+top+')':''}${more}${detail}`:`${j.riotId} · ${kind} 경기가 없어 챔프폭을 채우지 못했어요.${detail}`);
 }
@@ -910,17 +910,27 @@ async function fetchPool(opts={}){
     const r=await fetch(url,{cache:'no-store'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok)throw new Error(j.error||`불러오지 못했어요 (${r.status})`);
+    // 도우미가 읽은 클라이언트 기록을 중계 서버에도 쌓아둠 (Riot API는 쓰지 않음)
+    let upNote='';
+    if(LOCAL&&POOL_API&&j.riotId&&(j.records||[]).length){
+      try{
+        const ur=await fetch(`${POOL_API}/ingest`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({riotId:j.riotId,games:j.records})});
+        const uj=await ur.json().catch(()=>({}));
+        upNote=ur.ok?(uj.added?` · 서버에 새 기록 ${uj.added}판 저장`:''):` · 서버 저장 안 됨: ${uj.error||ur.status}`;
+      }catch(e){upNote=' · 서버에 연결하지 못해 이 PC에만 저장했어요';}
+    }
     if(LOCAL&&POOL_API&&opts.server&&j.riotId&&j.source!=='api'){
       // 클라이언트에 로그인한 아이디로 중계 서버의 최근 300판 기록을 받아옴
       try{
         idStatus(`${j.riotId} · 중계 서버에서 최근 300판 기록을 받는 중이에요.`);
         const wr=await fetch(`${POOL_API}/pool?riotId=${encodeURIComponent(j.riotId)}`);
         const w=await wr.json().catch(()=>({}));
-        if(wr.ok&&(w.totalGames||0)>=(j.totalGames||0)){applyPool(w);keepGoing(w);return true;}
+        if(wr.ok&&(w.totalGames||0)>=(j.totalGames||0)){applyPool(w);if(upNote)idStatus($('idStatus').textContent+upNote);keepGoing(w);return true;}
         if(!wr.ok){applyPool(j);idStatus($('idStatus').textContent+` · 중계 서버: ${w.error||wr.status}`);return true;}
       }catch(e){}
     }
     applyPool(j);
+    if(upNote)idStatus($('idStatus').textContent+upNote);
     if(!LOCAL)keepGoing(j);
     return true;
   }catch(e){

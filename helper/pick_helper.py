@@ -38,7 +38,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 PORT = int(os.environ.get("PICK_HELPER_PORT", "27150"))
 SITE = os.environ.get("PICK_HELPER_SITE", "https://wandadj.github.io/lol-pick-reader/")
 SITE_FILES = ["index.html", "data/stats.json", "data/config.json"]
@@ -480,6 +480,61 @@ def pool_from_records(summoner: dict, recs: dict, mastery: list[dict], names: di
     return out
 
 
+# ---------------------------------------------------------------- 클라이언트 전적 누적 (이 PC)
+def my_participant(g: dict, puuid: str) -> dict | None:
+    parts = g.get("participants") or []
+    if len(parts) == 1:
+        return parts[0]
+    pid = next((x.get("participantId") for x in g.get("participantIdentities") or []
+                if (x.get("player") or {}).get("puuid") == puuid), None)
+    return next((x for x in parts if x.get("participantId") == pid), None)
+
+
+def match_id(g: dict) -> str:
+    return f"{g.get('platformId') or 'KR'}_{g.get('gameId')}"
+
+
+def accumulate_client_games(puuid: str, games: list[dict]) -> tuple[dict, list[dict]]:
+    """
+    클라이언트가 보여주는 최근 20판 정도를 경기 ID 기준으로 이 PC에 쌓아서 최근 300판까지 유지.
+    내 기록만 남기고 다른 플레이어 정보는 저장하지 않음. (쌓인 전체, 이번에 읽은 경기) 반환
+    """
+    path = cache_dir().parent / f"client-matches-{puuid[:16]}.json"
+    try:
+        stored = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        stored = {}
+    fresh = []
+    for g in games:
+        me = my_participant(g, puuid)
+        if not me or not g.get("gameId"):
+            continue
+        slim = {"gameId": match_id(g), "queueId": g.get("queueId"), "gameDuration": g.get("gameDuration") or 0,
+                "gameCreation": g.get("gameCreation") or 0,
+                "participants": [{"championId": me.get("championId"), "stats": {"win": bool((me.get("stats") or {}).get("win"))},
+                                  "timeline": {"lane": (me.get("timeline") or {}).get("lane"), "role": (me.get("timeline") or {}).get("role")}}]}
+        stored[slim["gameId"]] = slim
+        fresh.append(slim)
+    newest = sorted(stored.values(), key=lambda x: -(x.get("gameCreation") or int(str(x["gameId"]).split("_")[-1] or 0)))[:KEEP_MATCHES]
+    stored = {x["gameId"]: x for x in newest}
+    try:
+        path.write_text(json.dumps(stored, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+    return stored, fresh
+
+
+def client_records(games: list[dict], names: dict[int, str]) -> list[dict]:
+    out = []
+    for g in games:
+        me = g["participants"][0]
+        champ = names.get(me.get("championId") or 0)
+        if champ:
+            out.append({"id": g["gameId"], "q": g.get("queueId"), "d": g.get("gameDuration") or 0, "t": g.get("gameCreation") or 0,
+                        "lane": match_lane(me.get("timeline") or {}), "c": champ, "w": bool(me["stats"]["win"])})
+    return out
+
+
 def load_pool(lcu: LCU) -> dict:
     names = lcu.champion_names()
     summoner = lcu.get("/lol-summoner/v1/current-summoner") or {}
@@ -523,7 +578,10 @@ def load_pool(lcu: LCU) -> dict:
         raise
     except Exception:
         mastery = []
-    out = parse_pool(summoner, games, mastery, names)
+    stored, fresh = accumulate_client_games(summoner["puuid"], games)
+    out = parse_pool(summoner, list(stored.values()), mastery, names)
+    out["fetchedGames"] = len(games)
+    out["records"] = client_records(fresh, names)  # 중계 서버에 올릴 이번 기록 (내 기록만)
     if key:
         out["sync"] = dict(SYNC.status)
     return out
