@@ -400,9 +400,13 @@ function render(){
     w.push(`팀 평균 우세 ${avg-base>=0?'+':''}${(avg-base).toFixed(1)} · 한타 ${x.tfAdv}%`);
     w.push(pc.src==='stat'?`통계 ${pc.games}판 · 승률 ${(pc.wr*100).toFixed(1)}%`:'추정값');
     const det=poolDetail()[c];
-    return {c,score,w:w.join(' · '),mine:pool.has(c),games:det&&det.games};
+    if(det){
+      if(det.games>0)w.push(`내 기록 ${det.games}판 ${det.wins}승`+(det.games<5?' · 표본 적음':` (${Math.round(det.wins/det.games*100)}%)`));
+      else if(det.mastery)w.push(`최근 기록 없음 · 숙련도 ${(det.mastery/10000).toFixed(1)}만 점`);
+    }
+    return {c,score:clamp(score+(det&&det.games?Math.min(4,det.games/5):0),0,100),w:w.join(' · '),mine:pool.has(c),games:det&&det.games,mastery:det&&det.mastery};
   }).sort((a,b)=>b.score-a.score).slice(0,12);
-  $('ranks').innerHTML=rows.length?rows.map((o,i)=>`<div class="rank"><span class="n">${i+1}</span><span class="name">${o.c}${o.mine?`<span class="badge">${o.games?o.games+'판':'챔프폭'}</span>`:''}</span><span class="bar"><i style="width:${Math.round(o.score)}%"></i></span><span class="v">${Math.round(o.score)}</span><span class="why">${o.w}</span></div>`).join('')
+  $('ranks').innerHTML=rows.length?rows.map((o,i)=>`<div class="rank"><span class="n">${i+1}</span><span class="name">${o.c}${o.mine?`<span class="badge">${o.games?o.games+'판':o.mastery?'숙련도':'챔프폭'}</span>`:''}</span><span class="bar"><i style="width:${Math.round(o.score)}%"></i></span><span class="v">${Math.round(o.score)}</span><span class="why">${o.w}</span></div>`).join('')
     :`<p class="empty">${ONLY_POOL?`${lane} 챔프폭에 남은 챔피언이 없어요. 위 칸에 챔프폭을 넣거나 '전체'로 바꿔보세요.`:'추천할 챔피언이 없어요.'}</p>`;
 }
 
@@ -461,27 +465,36 @@ $('idForm').addEventListener('submit',async ev=>{
   const id=$('riotId').value.trim();
   if(!/^.+#.+$/.test(id)){idStatus("'이름#태그' 형식으로 입력하세요.",true);return;}
   if(!POOL_API)return;
-  $('idBtn').disabled=true;idStatus('최근 랭크 경기를 확인하는 중이에요. 10초 정도 걸려요.');
+  $('idBtn').disabled=true;idStatus('최근 랭크 경기를 확인하는 중이에요. 처음엔 10~20초 걸려요.');
   try{
     const r=await fetch(`${POOL_API}/pool?riotId=${encodeURIComponent(id)}`);
     const j=await r.json().catch(()=>({}));
     if(!r.ok)throw new Error(j.error||`불러오지 못했어요 (${r.status})`);
     store.set('pr.riotId',id);
     const lanesFound=[];
+    const mast={};for(const m of (j.mastery||[])){const k=find(m.name);if(k)mast[k]=m.points;}
     for(const ln of LANES){
       const played=(j.positions&&j.positions[ln])||[];
-      const names=[],det={};
-      for(const row of played){const k=find(row.name)||row.name;if(!names.includes(k)){names.push(k);det[k]={games:row.games,wins:row.wins};}}
-      // 숙련도 상위 챔피언 중 이 포지션 챔피언을 뒤에 덧붙임 (주 포지션만)
-      if(ln===j.mainPosition)for(const m of (j.mastery||[]).slice(0,15)){const k=find(m.name);if(k&&R[ln].includes(k)&&!names.includes(k))names.push(k);}
-      if(!names.length)continue;
-      lanesFound.push(`${ln} ${played.reduce((s,x)=>s+x.games,0)}판`);
-      store.set('pr.pool.'+ln,names.join(', '));store.set('pr.detail.'+ln,JSON.stringify(det));
+      const laneGames=(j.positionGames&&j.positionGames[ln])||played.reduce((s,x)=>s+x.games,0);
+      const cand={};
+      for(const row of played){const k=find(row.name)||row.name;const c=cand[k]||(cand[k]={games:0,wins:0,mastery:mast[k]||0});c.games+=row.games;c.wins+=row.wins;}
+      // 이 포지션을 꾸준히 하면 숙련도 높은 포지션 챔피언도 챔프폭에 포함 (최근엔 안 했어도)
+      if(laneGames>=5||ln===j.mainPosition)for(const [k,pts] of Object.entries(mast))if(R[ln].includes(k)&&pts>=50000&&!cand[k])cand[k]={games:0,wins:0,mastery:pts};
+      // 선정: 2판 이상, 1판이어도 숙련도 3만 점 이상, 또는 숙련도로 추가된 챔피언
+      const picked=Object.entries(cand)
+        .filter(([k,d])=>d.games>=2||(d.games===1&&d.mastery>=30000)||d.games===0)
+        .sort((a,b)=>(b[1].games+b[1].mastery/100000*3)-(a[1].games+a[1].mastery/100000*3))
+        .slice(0,8);
+      if(!picked.length)continue;
+      lanesFound.push(`${ln} ${laneGames}판`);
+      store.set('pr.pool.'+ln,picked.map(x=>x[0]).join(', '));
+      store.set('pr.detail.'+ln,JSON.stringify(Object.fromEntries(picked)));
     }
     if(j.mainPosition){MY=LANES.indexOf(j.mainPosition);}
     applyPos();ONLY_POOL=true;applyFilter();render();
     const top=(j.positions&&j.mainPosition&&j.positions[j.mainPosition]||[]).slice(0,3).map(x=>`${x.name} ${x.games}판`).join(', ');
-    idStatus(lanesFound.length?`${j.riotId} · 최근 랭크 ${j.matchesChecked}판 확인 · 주 포지션 ${j.mainPosition}${top?' ('+top+')':''}`:`${j.riotId} · 최근 랭크 경기가 없어 챔프폭을 채우지 못했어요.`);
+    const more=j.pending?(j.stored?` · 다시 불러오면 ${Math.min(j.pending,30)}판 더 확인해요`:' · 서버 누적 저장이 꺼져 있어 최근 30판만 봐요'):'';
+    idStatus(lanesFound.length?`${j.riotId} · 최근 랭크 ${j.totalGames}판 기준 · 주 포지션 ${j.mainPosition}${top?' ('+top+')':''}${more}`:`${j.riotId} · 최근 랭크 경기가 없어 챔프폭을 채우지 못했어요.`);
   }catch(e){idStatus(e.message||'불러오지 못했어요.',true);}
   finally{$('idBtn').disabled=!POOL_API;}
 });

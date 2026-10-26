@@ -54,7 +54,7 @@ git add data/stats.json && git commit -m "통계 갱신" && git push
 
 ## 아이디로 챔프폭 불러오기 (Cloudflare Worker)
 
-페이지에 `이름#태그`를 넣으면 최근 랭크 15판과 챔피언 숙련도를 보고 포지션별 챔프폭을 자동으로 채워요. Riot API 키를 페이지에 넣으면 누구나 볼 수 있어서, 키를 숨겨주는 작은 중계 서버(`worker/worker.js`)를 Cloudflare Workers 무료 플랜에 올려서 써요.
+페이지에 `이름#태그`를 넣으면 최근 랭크 경기(최대 100판)와 챔피언 숙련도를 보고 포지션별 챔프폭을 자동으로 채워요. Riot API 키를 페이지에 넣으면 누구나 볼 수 있어서, 키를 숨겨주는 작은 중계 서버(`worker/worker.js`)를 Cloudflare Workers 무료 플랜에 올려서 써요.
 
 ### 대시보드로 배포하기 (설치 없이)
 1. [dash.cloudflare.com](https://dash.cloudflare.com/)에 가입하고 **Workers & Pages → Create → Create Worker**
@@ -62,7 +62,8 @@ git add data/stats.json && git commit -m "통계 갱신" && git push
 3. Worker의 **Settings → Variables and Secrets**에서 추가
    - `RIOT_API_KEY` : 종류 **Secret**, 값은 Riot API 키
    - `ALLOWED_ORIGIN` : 종류 **Text**, 값 `https://wandadj.github.io`
-4. Worker 주소(`https://lol-pick-reader.<계정>.workers.dev`)를 `data/config.json`의 `poolApi`에 넣고 커밋
+4. **KV 저장소 연결 (권장)**: 왼쪽 메뉴 **Storage & Databases → KV → Create**로 `lol-pick-reader-pool`을 만들고, Worker의 **Settings → Bindings → Add → KV namespace**에서 변수 이름 `POOL_KV`로 연결
+5. Worker 주소(`https://lol-pick-reader.<계정>.workers.dev`)를 `data/config.json`의 `poolApi`에 넣고 커밋
 
 ```json
 { "poolApi": "https://lol-pick-reader.<계정>.workers.dev" }
@@ -75,9 +76,15 @@ npx wrangler deploy
 npx wrangler secret put RIOT_API_KEY
 ```
 
+### 챔프폭은 어떻게 고르나요
+- 한 번 불러올 때 **새로 한 경기만 최대 30판** 받아요 (Cloudflare 무료 플랜의 요청당 외부 호출 50회 한도 안).
+- KV를 연결하면 아이디별로 경기를 쌓아서 **최근 랭크 100판**까지 봐요. 처음엔 30판 → 다시 불러오면 60판 → 90판 → 100판처럼 늘어나고, 그다음부터는 새 경기만 받아서 빨라요. KV가 없으면 매번 최근 30판만 봐요.
+- 포지션별 챔프폭 기준: 그 포지션에서 **2판 이상**, 또는 **1판 + 숙련도 3만 점 이상**. 주 포지션이거나 5판 이상 간 포지션이면 최근엔 안 했어도 **숙련도 5만 점 이상**인 챔피언을 포함해요.
+- 추천 목록에 "내 기록 21판 12승 (57%)"처럼 표시하고, 5판 미만은 승률 대신 **표본 적음**으로 표시해요.
+
 ### 알아두기
-- 한 번 불러올 때 Riot API를 약 18번 호출해요. 같은 아이디는 1시간 동안 캐시돼요.
-- Personal API Key 기본 한도(2분에 100회)로는 2분에 5명 정도 불러올 수 있어요. 사용자가 많아지면 Riot에 Production Key를 신청하세요.
+- 처음 불러올 때 Riot API를 최대 33번 호출해요. 같은 아이디는 모든 경기를 받은 뒤 10분 동안 캐시돼요.
+- Personal API Key 기본 한도(2분에 100회)로는 처음 불러오는 사람 기준 2분에 3명 정도예요. 사용자가 많아지면 Riot에 Production Key를 신청하세요.
 - 키가 만료되면 페이지에 "서버의 Riot API 키가 만료됐거나 잘못됐어요"라고 떠요. Worker의 `RIOT_API_KEY`만 바꾸면 돼요.
 
 ## 테스트

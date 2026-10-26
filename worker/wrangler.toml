@@ -6,3 +6,8 @@ compatibility_date = "2026-10-01"
 
 [vars]
 ALLOWED_ORIGIN = "https://wandadj.github.io"
+
+# 아이디별 경기 누적 저장 (선택). 만든 뒤 id를 넣으세요: npx wrangler kv namespace create POOL_KV
+# [[kv_namespaces]]
+# binding = "POOL_KV"
+# id = "여기에-KV-id"

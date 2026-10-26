@@ -2,11 +2,19 @@
  * 픽창 판독기 챔프폭 중계 서버 (Cloudflare Worker)
  *
  * GET /pool?riotId=이름%23태그
- *   → { riotId, mainPosition, positions: { SUP: [{name, games, wins}], ... }, mastery: [{name, points, level}] }
+ *   → {
+ *       riotId, mainPosition,
+ *       totalGames,        // 집계에 쓴 최근 랭크 경기 수 (최대 100)
+ *       pending,           // 아직 못 받은 최근 경기 수 (다시 불러오면 이어서 받음)
+ *       positions: { SUP: [{ name, games, wins }], ... },
+ *       mastery: [{ name, points, level }]
+ *     }
  *
- * 필요한 설정 (Cloudflare 대시보드 → Worker → Settings → Variables and Secrets)
- *   RIOT_API_KEY    (Secret)  Riot API 키
- *   ALLOWED_ORIGIN  (Text)    https://wandadj.github.io   여러 개면 쉼표로 구분
+ * 설정 (Cloudflare 대시보드 → Worker → Settings)
+ *   RIOT_API_KEY    (Secret)      Riot API 키
+ *   ALLOWED_ORIGIN  (Text)        https://wandadj.github.io   여러 개면 쉼표로 구분
+ *   POOL_KV         (KV 바인딩)    선택. 연결하면 아이디별 경기를 최대 100판까지 쌓아둬요.
+ *                                  없으면 매번 최근 30판만 봐요.
  *
  * Riot API 키는 이 서버 안에서만 쓰이고 페이지로는 절대 내려가지 않아요.
  */
@@ -14,12 +22,14 @@
 const PLATFORM = "kr";
 const REGION = "asia";
 const RANKED_SOLO = 420;
-const MATCH_COUNT = 15;          // 조회할 최근 랭크 경기 수 (경기당 요청 1회)
-const MASTERY_COUNT = 25;
-const CACHE_SECONDS = 60 * 60;   // 같은 아이디는 1시간 캐시
+const KEEP_MATCHES = 100;       // 아이디별로 보관하는 최근 경기 수
+const NEW_PER_LOAD = 30;        // 한 번 불러올 때 새로 받는 경기 수 (무료 플랜 외부 호출 50회 한도 안)
+const BATCH = 10;               // 동시에 받는 경기 수
+const MASTERY_COUNT = 40;
+const CACHE_SECONDS = 10 * 60;  // 같은 아이디 응답 캐시
 const POS = { TOP: "TOP", JUNGLE: "JGL", MIDDLE: "MID", BOTTOM: "ADC", UTILITY: "SUP" };
 
-class HttpError extends Error {
+export class HttpError extends Error {
   constructor(status, message, retryAfter) {
     super(message);
     this.status = status;
@@ -55,8 +65,12 @@ async function riot(env, host, path) {
 }
 
 let champCache = null;
-async function championNames() {
+async function championNames(env) {
   if (champCache) return champCache;
+  if (env.POOL_KV) {
+    const saved = await env.POOL_KV.get("champ-names", "json");
+    if (saved && Date.now() - saved.at < 24 * 3600 * 1000) return (champCache = saved);
+  }
   const versions = await (await fetch("https://ddragon.leagueoflegends.com/api/versions.json")).json();
   const data = (await (await fetch(`https://ddragon.leagueoflegends.com/cdn/${versions[0]}/data/ko_KR/champion.json`)).json()).data;
   const byKey = {}, byId = {};
@@ -64,7 +78,8 @@ async function championNames() {
     byKey[c.key] = c.name;
     byId[c.id.toLowerCase()] = c.name;
   }
-  champCache = { byKey, byId };
+  champCache = { byKey, byId, at: Date.now() };
+  if (env.POOL_KV) await env.POOL_KV.put("champ-names", JSON.stringify(champCache));
   return champCache;
 }
 
@@ -77,6 +92,19 @@ export function parseRiotId(raw) {
   return { name, tag };
 }
 
+/** 경기 하나에서 내 기록만 뽑음. 랭크가 아니거나 15분 미만이면 skip 표시. */
+function myRecord(match, puuid, names) {
+  const info = match && match.info;
+  const me = info && info.participants.find((p) => p.puuid === puuid);
+  if (!me || !POS[me.teamPosition] || info.gameDuration < 15 * 60) return { skip: true, t: info?.gameCreation || 0 };
+  return {
+    lane: POS[me.teamPosition],
+    champ: names.byId[String(me.championName).toLowerCase()] || me.championName,
+    win: !!me.win,
+    t: info.gameCreation || 0,
+  };
+}
+
 export async function buildPool(env, riotId) {
   const id = parseRiotId(riotId);
   if (!id) throw new HttpError(400, "아이디는 '이름#태그' 형식으로 입력하세요. 예: Hide on bush#KR1");
@@ -85,27 +113,44 @@ export async function buildPool(env, riotId) {
     `/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(id.name)}/${encodeURIComponent(id.tag)}`);
   if (!account) throw new HttpError(404, "그 아이디를 찾을 수 없어요. 이름과 태그를 다시 확인하세요.");
   const puuid = account.puuid;
-  const names = await championNames();
+  const names = await championNames(env);
 
-  const [mastery, matchIds] = await Promise.all([
+  const [mastery, recentIds] = await Promise.all([
     riot(env, PLATFORM, `/lol/champion-mastery/v4/champion-masteries/by-puuid/${puuid}/top?count=${MASTERY_COUNT}`),
-    riot(env, REGION, `/lol/match/v5/matches/by-puuid/${puuid}/ids?queue=${RANKED_SOLO}&start=0&count=${MATCH_COUNT}`),
+    riot(env, REGION, `/lol/match/v5/matches/by-puuid/${puuid}/ids?queue=${RANKED_SOLO}&start=0&count=${KEEP_MATCHES}`),
   ]);
+  const ids = recentIds || [];
+
+  // 저장된 기록 불러오기
+  const kvKey = `pool:${puuid}`;
+  const stored = (env.POOL_KV && (await env.POOL_KV.get(kvKey, "json"))) || { matches: {} };
+  const known = stored.matches;
+
+  // 새 경기만, 최신 순으로 최대 NEW_PER_LOAD개
+  const todo = ids.filter((m) => !(m in known)).slice(0, NEW_PER_LOAD);
+  for (let i = 0; i < todo.length; i += BATCH) {
+    const chunk = todo.slice(i, i + BATCH);
+    const got = await Promise.all(chunk.map((m) => riot(env, REGION, `/lol/match/v5/matches/${m}`)));
+    chunk.forEach((m, j) => { if (got[j]) known[m] = myRecord(got[j], puuid, names); });
+  }
+
+  // 최근 100판 범위만 남김 (목록에 없는 오래된 경기는 정리)
+  const keep = new Set(ids);
+  for (const m of Object.keys(known)) if (!keep.has(m)) delete known[m];
+  if (env.POOL_KV) await env.POOL_KV.put(kvKey, JSON.stringify({ matches: known, updated: Date.now() }));
 
   const positions = {};
   const posGames = {};
-  for (const mid of matchIds || []) {
-    const m = await riot(env, REGION, `/lol/match/v5/matches/${mid}`);
-    const me = m && m.info && m.info.participants.find((p) => p.puuid === puuid);
-    if (!me || !POS[me.teamPosition] || m.info.gameDuration < 15 * 60) continue;
-    const lane = POS[me.teamPosition];
-    const name = names.byId[String(me.championName).toLowerCase()] || me.championName;
-    const list = (positions[lane] ||= []);
-    let row = list.find((r) => r.name === name);
-    if (!row) list.push((row = { name, games: 0, wins: 0 }));
+  let total = 0;
+  for (const r of Object.values(known)) {
+    if (r.skip) continue;
+    total += 1;
+    const list = (positions[r.lane] ||= []);
+    let row = list.find((x) => x.name === r.champ);
+    if (!row) list.push((row = { name: r.champ, games: 0, wins: 0 }));
     row.games += 1;
-    row.wins += me.win ? 1 : 0;
-    posGames[lane] = (posGames[lane] || 0) + 1;
+    row.wins += r.win ? 1 : 0;
+    posGames[r.lane] = (posGames[r.lane] || 0) + 1;
   }
   for (const list of Object.values(positions)) list.sort((a, b) => b.games - a.games || b.wins - a.wins);
   const mainPosition = Object.entries(posGames).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
@@ -113,8 +158,11 @@ export async function buildPool(env, riotId) {
   return {
     riotId: `${account.gameName}#${account.tagLine}`,
     mainPosition,
-    matchesChecked: (matchIds || []).length,
+    totalGames: total,
+    pending: ids.filter((m) => !(m in known)).length,
+    stored: !!env.POOL_KV,
     positions,
+    positionGames: posGames,
     mastery: (mastery || []).map((c) => ({
       name: names.byKey[String(c.championId)] || String(c.championId),
       points: c.championPoints,
@@ -140,7 +188,8 @@ export default {
     }
     try {
       const body = await buildPool(env, riotId);
-      if (cache) {
+      // 아직 받을 경기가 남았으면 다음 요청에서 이어 받도록 캐시하지 않음
+      if (cache && body.pending === 0) {
         const stored = new Response(JSON.stringify(body), { headers: { "Cache-Control": `max-age=${CACHE_SECONDS}` } });
         ctx.waitUntil(cache.put(cacheKey, stored));
       }
