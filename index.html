@@ -256,6 +256,9 @@ details.fold[open] .ssum{display:none}
     <hr class="sep">
     <span class="label">구간별로 할 일</span>
     <ul class="list" id="plan"></ul>
+    <hr class="sep">
+    <span class="label" id="roleTitle">내 역할</span>
+    <ul class="list" id="rolePlan"></ul>
     </div>
   </details>
 
@@ -300,7 +303,7 @@ const PH=["0~10분","10~20분","20~30분","30분 이후"];
 const $=id=>document.getElementById(id);
 const norm=s=>s.replace(/\s+/g,'').toLowerCase();
 // 페이지를 고칠 때마다 올리는 버전 (날짜.번호)
-const PAGE_VERSION='2026.10.27.8';
+const PAGE_VERSION='2026.10.27.9';
 let HELPER_VER=null;
 function updateVer(){
   const el=document.getElementById('verLine');if(!el)return;
@@ -492,6 +495,67 @@ function renderLanes(an,ap,en){
   return L;
 }
 
+// ---- 조사: 받침 있으면 a, 없으면 b (아크샨이 / 제라스가)
+function jo(w,a,b){const ch=String(w).trim().slice(-1).charCodeAt(0)-0xAC00;return w+((ch>=0&&ch<11172&&ch%28)?a:b);}
+// ---- 내 챔피언이 구간별로 할 일
+const CATCH=new Set(['파이크','블리츠크랭크','쓰레쉬','노틸러스','렐','모르가나','베인','스카너']);
+function archetype(c,lane){
+  const t=(D[c]||[,,,,''])[4];
+  if(lane==='SUP'){
+    if(CATCH.has(c))return 'catch';
+    if(t.includes('E')&&t.includes('F'))return 'engage';
+    if(t.includes('P'))return 'enchanter';
+    return 'mage';
+  }
+  if(t.includes('F'))return 'front';
+  return 'carry';
+}
+function rolePlan(an,ap,en,r){
+  const me=an[MY];
+  if(!me)return ['내 챔피언을 고르면 구간별로 할 일이 나와요. 추천 목록 1위를 넣어보세요.'];
+  const lane=LANES[MY],kind=archetype(me,lane),my=curve(me,0,MY),team=r.adv,L=r.L||[];
+  const nm=a=>a.filter(Boolean).join('·');
+  const allies=an.map((c,i)=>i===MY?null:c);
+  const engager=nm(allies.filter(c=>c&&D[c]&&D[c][4].includes('E')).slice(0,2));
+  const carries=nm([an[3],an[2]].filter((c,k)=>c&&[3,2][k]!==MY&&(curve(c,0,[3,2][k])[3]>=3.5||[3,2][k]===3)));
+  const divers=nm(en.filter((c,i)=>c&&i<3&&D[c]&&(D[c][4].includes('E')||curve(c,0,i)[0]>=4)).slice(0,3));
+  const targets=nm([en[3],en[2],en[4]].filter(c=>c&&D[c]&&!D[c][4].includes('F')).slice(0,2));
+  const weak=L.filter(l=>l.nm!=='BOT'&&l.nm!=='JGL'&&l.avg<=44).map(l=>l.nm);
+  const myLane=L.find(l=>l.idx.includes(MY));
+  const lateTeam=(team[2]+team[3])/2,myEarly=my[0]>=4,myLateWeak=my[3]<=2.5;
+  const p=[];
+  // 0~10분
+  if(kind==='catch'||kind==='engage'){
+    p.push(`0~10분: ${myEarly?'내가 가장 강한 구간이에요. ':''}${myLane&&myLane.avg>=54?'바텀 주도권으로 레벨 2 선점과 킬각을 노리고 첫 용을 가져가세요.':myLane&&myLane.avg<=46?'바텀은 불리해요. 무리한 교전 대신 웨이브를 당겨 받고 정글 합류를 기다리세요.':'바텀 2:2 주도권을 먼저 잡는 쪽이 첫 용을 가져가요.'}${weak.length?` 웨이브를 민 뒤엔 밀리고 있는 ${weak.join('·')}로 로밍해서 손해를 줄여주세요.`:''}`);
+  }else if(kind==='enchanter'){
+    p.push(`0~10분: 무리한 딜교환보다 원딜의 CS와 체력을 지켜주세요.${myLane&&myLane.avg<=46?' 바텀이 불리해서 포탑 근처에서 버티는 게 좋아요.':''}`);
+  }else if(kind==='mage'){
+    p.push('0~10분: 견제로 상대 바텀 체력을 깎아서 라인 주도권을 잡으세요. 맞딜보다 스킬 사거리로 이기는 구간이에요.');
+  }else{
+    p.push(`0~10분: ${myLane&&myLane.avg>=54?'라인 주도권이 있어요. 적극적으로 딜교환하고 정글과 같이 킬각을 노리세요.':myLane&&myLane.avg<=46?'라인전이 불리해요. CS를 챙기며 버티고 정글 갱에 대비하세요.':'비슷한 라인이에요. 정글 위치를 보면서 주도권을 잡으세요.'}`);
+  }
+  // 10~20분
+  if(lane==='SUP')p.push(`10~20분: 상대 정글 동선과 강가에 와드를 깔고, 오브젝트 1분 전에 시야를 먼저 잡으세요.${kind==='catch'?' 상대가 와드를 박으러 올 때가 캐치 타이밍이에요.':''}`);
+  else p.push('10~20분: 오브젝트 1분 전에 라인을 밀어두고 합류하세요. 합류가 늦으면 오브젝트를 내줘요.');
+  // 20분 이후
+  if(lateTeam>=54){
+    const tail={
+      catch:`팀이 더 강해지는 구간이라 ${jo(me,'이','가')} 캐리할 필요는 없어요. 역할을 바꾸세요. 정면 한타에선 먼저 들어가지 말고${engager?` ${engager} 이니시 뒤에`:' 아군 이니시 뒤에'} 들어가서 마무리하세요.${carries?` ${carries}에게${divers?` ${jo(divers,'이','가')}`:' 상대가'} 붙으면 끊어주는 게 1순위예요.`:''}${targets?` 시야 밖에서 끊을 대상은 ${jo(targets,'이에요','예요')}. 한 명만 끊어도 숫자 우위로 바론을 칠 수 있어요.`:''} 질 이유가 없는 후반이라 혼자 깊게 들어가서 죽는 게 가장 큰 손해예요.`,
+      engage:`팀이 강해지는 구간이에요. ${jo(me,'이','가')} 한타를 여는 역할이에요.${carries?` ${jo(carries,'이','가')} 딜할 수 있는 거리에서`:''} 이니시하고,${targets?` 노릴 대상은 ${jo(targets,'이에요','예요')}.`:''} 바론·용 앞 시야를 먼저 잡고 싸움을 거세요.`,
+      enchanter:`팀이 강해지는 구간이에요.${carries?` ${carries} 옆에 붙어서`:' 아군 딜러 옆에서'} 보호하는 게 전부예요.${divers?` ${jo(divers,'이','가')} 들어올 때를 대비해 보호 스킬을 아껴두세요.`:''} 먼저 앞에 서서 시야를 잡지 말고, 탱커와 같이 움직이세요.`,
+      mage:`팀이 강해지는 구간이에요. 한타 전에 뒤에서 견제로 체력을 깎고, 싸움이 열리면 광역 스킬로 딜을 보태세요.${divers?` ${divers}에게 물리지 않게 위치를 조심하세요.`:''}`,
+      front:`팀이 강해지는 구간이에요. 앞라인을 맡아서${carries?` ${jo(carries,'이','가')}`:' 딜러가'} 안전하게 딜할 시간을 버세요.`,
+      carry:'팀이 강해지는 구간이에요. 주 딜러로서 앞라인 뒤에서 안전하게 딜하세요. 혼자 사이드에서 잡히지 않게 조심하세요.'
+    }[kind];
+    p.push(`20분 이후: ${tail}`);
+  }else if(lateTeam<=46){
+    p.push(`20분 이후: 시간이 갈수록 불리해져요.${myLateWeak?` ${me}도 후반이 약해서`:''} 25분 전에 끝내야 해요. 오브젝트를 묶어서 포탑을 밀고, 상대가 성장하기 전에 한타를 거세요.${kind==='catch'&&targets?` 끊을 대상은 ${jo(targets,'이에요','예요')}.`:''}`);
+  }else{
+    p.push(`20분 이후: 팽팽한 구간이에요. ${kind==='catch'?`정면 한타보다 시야 밖 캐치로 숫자 우위를 먼저 만드세요.${targets?` 노릴 대상은 ${jo(targets,'이에요','예요')}.`:''}`:kind==='engage'?'이니시 타이밍이 승부를 가려요. 상대 핵심 스킬이 빠졌을 때 여세요.':'한 번의 한타가 승부를 가르니 무리한 사이드 운영은 피하세요.'}`);
+  }
+  return p;
+}
+
 function plan(r){
   const p=[],a=r.adv,peak=a.indexOf(Math.max(...a)),low=a.indexOf(Math.min(...a));
   const L=r.L||[];
@@ -548,6 +612,9 @@ function render(){
   $('mcBig').innerHTML=`<b style="color:${mcL[1]}">${mcL[0]}</b><span class="pill" style="color:${mcL[1]}">난이도 ${r.mc}</span>`;
   $('mcWhy').innerHTML=r.mcWhy.map(t=>`<li>${t}</li>`).join('');
   $('plan').innerHTML=plan(r).map(t=>`<li>${t}</li>`).join('');
+  const rp=rolePlan(an,ap,en,r);
+  $('roleTitle').textContent=an[MY]?`내 역할 · ${an[MY]} (${LANES[MY]})`:`내 역할 (${LANES[MY]})`;
+  $('rolePlan').innerHTML=rp.map(t=>`<li>${t}</li>`).join('');
 
   // 추천: 내 자리에 각 후보를 넣어 재계산
   const lane=LANES[MY],mine=an[MY],foe=en[MY];
