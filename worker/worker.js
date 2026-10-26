@@ -18,8 +18,9 @@
  *                                  비우면 누구나 조회 가능 (Production Key를 받은 뒤에만)
  *   POOL_KV         (KV 바인딩)    아이디별 경기를 최근 300판까지 쌓아둬요.
  *                                  없으면 매번 최근 35판만 봐요.
- *   예약 실행(Cron)  선택. "5분마다"로 켜두면 ALLOWED_RIOT_IDS의 아이디들을 돌아가며
- *                                  5분마다 새 경기를 모아둬요. (KV 필요)
+ *
+ * 수집은 누군가 페이지에서 불러오기를 누를 때만 해요. 한 번에 새 경기를 최대 35판 받고,
+ * 페이지가 1분마다 이어서 요청해서 300판까지 채워요.
  *
  * Riot API 키는 이 서버 안에서만 쓰이고 페이지로는 절대 내려가지 않아요.
  */
@@ -29,7 +30,6 @@ const REGION = "asia";
 const RANKED_SOLO = 420;
 const KEEP_MATCHES = 300;       // 아이디별로 보관하는 최근 경기 수
 const NEW_PER_LOAD = 35;        // 한 번 불러올 때 새로 받는 경기 수 (무료 플랜 외부 호출 50회 한도 안)
-const NEW_PER_CRON = 40;        // 예약 실행 한 번에 새로 받는 경기 수
 // 포지션이 있는 큐만: 솔로·자유 랭크, 빠른 대전, 일반 드래프트, 신속 대전
 const ID_QUERIES = ["type=ranked", "queue=490", "queue=400", "queue=480"];
 const BATCH = 10;               // 동시에 받는 경기 수
@@ -171,25 +171,6 @@ export async function syncUser(env, puuid, budget, names) {
   return { known, pending };
 }
 
-/** 예약 실행: 등록된 아이디를 한 명씩 돌아가며 새 경기를 모음 */
-export async function cronSync(env) {
-  const list = String(env.ALLOWED_RIOT_IDS || "").split(",").map((x) => x.trim()).filter(Boolean);
-  if (!list.length || !env.POOL_KV || !env.RIOT_API_KEY) return null;
-  const n = Number(await env.POOL_KV.get("cron:next")) || 0;
-  const raw = list[n % list.length];
-  await env.POOL_KV.put("cron:next", String((n + 1) % list.length));
-  const id = parseRiotId(raw);
-  if (!id) return { riotId: raw, error: "형식 오류" };
-  try { // 한 아이디에서 문제가 생겨도 다음 실행 때 다음 사람으로 넘어감
-    const account = await getAccount(env, id);
-    const names = await championNames(env);
-    const { known, pending } = await syncUser(env, account.puuid, NEW_PER_CRON, names);
-    return { riotId: raw, stored: Object.keys(known).length, pending };
-  } catch (e) {
-    return { riotId: raw, error: e.message };
-  }
-}
-
 export async function buildPool(env, riotId) {
   const id = parseRiotId(riotId);
   if (!id) throw new HttpError(400, "아이디는 '이름#태그' 형식으로 입력하세요. 예: Hide on bush#KR1");
@@ -227,7 +208,6 @@ export async function buildPool(env, riotId) {
     skippedGames: skipped,
     pending,
     stored: !!env.POOL_KV,
-    autoSync: !!(env.POOL_KV && String(env.ALLOWED_RIOT_IDS || "").trim()),
     positions,
     positionGames: posGames,
     mastery: (mastery || []).map((c) => ({
@@ -239,10 +219,6 @@ export async function buildPool(env, riotId) {
 }
 
 export default {
-  async scheduled(event, env, ctx) {
-    ctx.waitUntil(cronSync(env).catch(() => null));
-  },
-
   async fetch(request, env, ctx) {
     const cors = corsHeaders(request, env);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });

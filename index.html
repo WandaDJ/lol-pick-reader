@@ -95,6 +95,8 @@ button:hover{border-color:var(--brass)}
 @media (max-width:480px){.rank{grid-template-columns:20px 118px minmax(0,1fr) 34px}}
 .empty{font-size:14px;color:var(--muted);margin:0}
 .idrow{display:grid;gap:6px}
+.keybox>summary{cursor:pointer}
+.keybox[open]>summary{margin-bottom:8px}
 .idctl{display:flex;gap:8px;max-width:520px}
 details.fold{gap:0}
 details.fold>summary{list-style:none;cursor:pointer;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:-4px 0;padding:4px 0;border-radius:6px}
@@ -169,13 +171,15 @@ details.fold[open] .ssum{display:none}
       <div class="idctl"><input id="riotId" placeholder="이름#태그 (예: Hide on bush#KR1)" autocomplete="off" maxlength="42"><button type="submit" id="idBtn">불러오기</button></div>
       <span class="count" id="idStatus"></span>
     </form>
-    <form class="idrow" id="keyForm" hidden>
+    <details class="keybox" id="keyBox" hidden><summary class="note">선택: 중계 서버 없이 이 PC에서 전적 더 보기 (내 Riot API 키 필요)</summary>
+    <form class="idrow" id="keyForm">
       <label class="label" for="keyIn">전적 더 보기 (Riot API 키)</label>
       <span class="note" id="keyNote">클라이언트는 최근 20판 정도만 보여줘요. 내 Riot API 키를 넣으면 내 계정 경기를 최근 300판까지 받아요. 키는 이 PC에만 저장되고 Riot 서버에만 보내요.</span>
       <div class="idctl" id="keyCtl"><input id="keyIn" type="password" placeholder="RGAPI-로 시작하는 키" autocomplete="off" spellcheck="false"><button type="submit" id="keyBtn">저장</button></div>
       <div class="idctl" id="keyOn" hidden><span class="count" id="keyState"></span><button type="button" id="keyDel">키 삭제</button></div>
       <span class="count" id="keyMsg"></span>
     </form>
+    </details>
     <label class="proftoggle"><input type="checkbox" id="profOn"><span>아군 실력을 알 때만 입력 <span class="note">(듀오, 채팅으로 들은 경우 등. 솔로 랭크 픽창에선 닉네임이 가려져 보통 알 수 없어요)</span></span></label>
     <div class="teams">
       <div class="team" id="allyBox">
@@ -295,7 +299,7 @@ const PH=["0~10분","10~20분","20~30분","30분 이후"];
 const $=id=>document.getElementById(id);
 const norm=s=>s.replace(/\s+/g,'').toLowerCase();
 // 페이지를 고칠 때마다 올리는 버전 (날짜.번호)
-const PAGE_VERSION='2026.10.27.3';
+const PAGE_VERSION='2026.10.27.5';
 let HELPER_VER=null;
 function updateVer(){
   const el=document.getElementById('verLine');if(!el)return;
@@ -791,7 +795,7 @@ async function loadConfig(){
     $('riotId').hidden=true;$('idBtn').disabled=false;$('idBtn').textContent='내 계정에서 불러오기';
     document.querySelector('label[for="riotId"]').textContent='내 챔프폭 불러오기 (롤 클라이언트 계정)';
     idStatus('롤 클라이언트에 로그인하면 최근 전적과 숙련도로 자동으로 채워요.');
-    $('keyForm').hidden=false;refreshKey();
+    if(!POOL_API){$('keyBox').hidden=false;refreshKey().then(j=>{if(j&&j.hasKey)$('keyBox').open=true;});}
     return;
   }
   $('idBtn').disabled=!POOL_API;
@@ -866,7 +870,7 @@ function applyPool(j){
   if(j.mainPosition&&!liveSig){MY=LANES.indexOf(j.mainPosition);}
   applyPos();ONLY_POOL=true;applyFilter();render();
   const top=(j.positions&&j.mainPosition&&j.positions[j.mainPosition]||[]).slice(0,3).map(x=>`${x.name} ${x.games}판`).join(', ');
-  const more=j.pending?(j.autoSync?` · 아직 ${j.pending}판 남음, 서버가 5분마다 자동으로 모으고 있어요`:j.stored?` · 다시 불러오면 ${Math.min(j.pending,35)}판 더 확인해요`:' · 서버 누적 저장이 꺼져 있어 최근 35판만 봐요'):'';
+  const more=j.pending?(j.stored?` · 아직 ${j.pending}판 남음`:' · 서버 누적 저장이 꺼져 있어 최근 35판만 봐요'):'';
   let kind='최근 랭크',detail='';
   if(j.source==='api'){
     kind='Riot 기록 일반·랭크';
@@ -890,8 +894,9 @@ function applyPool(j){
   }
   idStatus(lanesFound.length?`${j.riotId} · ${kind} ${j.totalGames}판 기준 · 주 포지션 ${j.mainPosition}${top?' ('+top+')':''}${more}${detail}`:`${j.riotId} · ${kind} 경기가 없어 챔프폭을 채우지 못했어요.${detail}`);
 }
-async function fetchPool(){
+async function fetchPool(opts={}){
   let url;
+  clearTimeout(CONT_TIMER);
   if(LOCAL){url='/pool';}
   else{
     const id=$('riotId').value.trim();
@@ -905,12 +910,36 @@ async function fetchPool(){
     const r=await fetch(url,{cache:'no-store'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok)throw new Error(j.error||`불러오지 못했어요 (${r.status})`);
+    if(LOCAL&&POOL_API&&opts.server&&j.riotId&&j.source!=='api'){
+      // 클라이언트에 로그인한 아이디로 중계 서버의 최근 300판 기록을 받아옴
+      try{
+        idStatus(`${j.riotId} · 중계 서버에서 최근 300판 기록을 받는 중이에요.`);
+        const wr=await fetch(`${POOL_API}/pool?riotId=${encodeURIComponent(j.riotId)}`);
+        const w=await wr.json().catch(()=>({}));
+        if(wr.ok&&(w.totalGames||0)>=(j.totalGames||0)){applyPool(w);keepGoing(w);return true;}
+        if(!wr.ok){applyPool(j);idStatus($('idStatus').textContent+` · 중계 서버: ${w.error||wr.status}`);return true;}
+      }catch(e){}
+    }
     applyPool(j);
+    if(!LOCAL)keepGoing(j);
     return true;
-  }catch(e){idStatus(e.message||'불러오지 못했어요.',true);return false;}
+  }catch(e){
+    idStatus(e.message||'불러오지 못했어요.',true);
+    if(opts.server&&/요청이 많아요/.test(e.message||''))CONT_TIMER=setTimeout(()=>fetchPool({server:true}),60000);
+    return false;
+  }
   finally{$('idBtn').disabled=LOCAL?false:!POOL_API;}
 }
-$('idForm').addEventListener('submit',ev=>{ev.preventDefault();fetchPool();});
+// 버튼을 누른 사람만 서버에서 수집, 남은 경기가 있으면 페이지가 열려 있는 동안 1분마다 이어서 받음
+let CONT_TIMER=null;
+function keepGoing(j){
+  clearTimeout(CONT_TIMER);
+  if(j&&j.pending>0&&j.stored){
+    idStatus($('idStatus').textContent+' · 이 페이지를 열어두면 1분마다 이어서 받아요');
+    CONT_TIMER=setTimeout(()=>fetchPool({server:true}),60000);
+  }
+}
+$('idForm').addEventListener('submit',ev=>{ev.preventDefault();fetchPool({server:true});});
 loadConfig();
 </script>
 </body>

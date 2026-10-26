@@ -9,9 +9,6 @@ ALLOWED_ORIGIN = "https://wandadj.github.io"
 # 조회를 허용할 아이디 (Personal Key는 지인용이라 꼭 채우세요)
 ALLOWED_RIOT_IDS = ""
 
-# 5분마다 등록된 아이디의 새 경기를 모음
-[triggers]
-crons = ["*/5 * * * *"]
 
 # 아이디별 경기 누적 저장 (선택). 만든 뒤 id를 넣으세요: npx wrangler kv namespace create POOL_KV
 # [[kv_namespaces]]

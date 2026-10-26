@@ -1,6 +1,6 @@
 // 가짜 Riot 응답으로 중계 서버 검증: node worker/worker.test.mjs
 import assert from "node:assert/strict";
-import worker, { parseRiotId, cronSync } from "./worker.js";
+import worker, { parseRiotId } from "./worker.js";
 
 const ME = "puuid-me";
 const champs = { Thresh: ["412", "쓰레쉬"], Pyke: ["555", "파이크"], Nautilus: ["111", "노틸러스"], Ahri: ["103", "아리"] };
@@ -92,20 +92,7 @@ assert.equal(denied.status, 403);
 assert.match((await denied.json()).error, /등록된 아이디만/);
 assert.equal(calls, 0, "허용 안 된 아이디는 Riot API를 호출하지 않아야 함");
 
-// 4) 예약 실행: 등록된 아이디를 돌아가며 모으기
-const envCron = { ...envLimited, ALLOWED_RIOT_IDS: "다른사람#KR1, 동재#KR1", POOL_KV: new FakeKV() };
-const runs = [];
-for (let n = 0; n < 4; n++) { calls = 0; runs.push(await cronSync(envCron)); assert.ok(calls <= 48, `예약 실행 외부 호출 ${calls}회`); }
-// 목록 순서대로 번갈아 실행, '다른사람#KR1'은 없는 아이디라 오류 → 다음 사람으로 넘어감
-const mine = runs.filter((r) => r && r.riotId.startsWith("동"));
-assert.ok(mine.length >= 1);
-const after = await (await call(envCron, "동재#KR1")).json();
-assert.equal(after.pending, 0);
-assert.equal(after.totalGames, 74);
-assert.equal(after.autoSync, true);
-assert.equal(await cronSync({ ...envCron, ALLOWED_RIOT_IDS: "" }), null);  // 목록이 비면 아무것도 안 함
-
-// 5) 오류와 CORS
+// 4) 오류와 CORS
 let res = await call(envNoKV, "없는사람#KR1");
 assert.equal(res.status, 404);
 assert.match((await res.json()).error, /찾을 수 없어요/);
@@ -113,4 +100,4 @@ assert.equal((await call(envNoKV, "형식오류")).status, 400);
 res = await call(envNoKV, "동재#KR1", "https://evil.example");
 assert.equal(res.headers.get("Access-Control-Allow-Origin"), null);
 
-console.log("ok: 누적 35→70→75판, KV 없이 35판, 아이디 제한, 예약 실행, 오류·CORS 확인");
+console.log("ok: 누적 35→70→75판, KV 없이 35판, 아이디 제한, 오류·CORS 확인");
