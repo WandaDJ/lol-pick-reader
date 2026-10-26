@@ -434,6 +434,10 @@ const LANE_TIP={
   MID:{up:'미드 주도권이 있어요. 미드가 먼저 밀고 정글·서폿 로밍에 합류하기 좋아요.',dn:'미드가 밀리는 구간이에요. 미드 로밍을 막기 어려우니 사이드 라인은 상대 미드 위치 확인 필수.',ev:'미드는 비슷해요. 강가 시야를 먼저 잡는 쪽이 주도권을 가져가요.'},
   BOT:{up:'바텀 2:2가 유리해요. 레벨 2 선점과 공격적인 딜교환으로 첫 용 주도권을 가져가세요.',dn:'바텀 2:2가 불리해요. 웨이브를 당겨 받고, 정글 지원 전까지 무리한 교전은 피하세요.',ev:'바텀은 비슷해요. 레벨 2 타이밍과 정글 위치가 승부를 가려요.'}
 };
+function offRole(l,an,en){
+  const odd=[];l.idx.forEach(i=>{[an[i],en[i]].forEach(c=>{if(c&&R[LANES[i]]&&!R[LANES[i]].includes(c))odd.push(c);});});
+  return odd.length?`<br><span class="risk">${odd.join(', ')}: 보통 이 라인에 가지 않는 챔피언이라 추정이 부정확해요</span>`:'';
+}
 function laneTip(l){return l.avg>=56?LANE_TIP[l.nm].up:l.avg<=44?LANE_TIP[l.nm].dn:LANE_TIP[l.nm].ev;}
 function strategy(L){
   const s=[],up=L.filter(l=>l.avg>=56),dn=L.filter(l=>l.avg<=44);
@@ -455,23 +459,35 @@ function renderLanes(an,ap,en){
   $('lanes').innerHTML=L.map(l=>{
     const bars=l.pct.map((v,i)=>{const left=v>=50?50:v,w=Math.abs(v-50);
       return `<span class="t">${PH[i]}</span><div class="dv"><i style="left:${left}%;width:${w}%;background:${stCol(v)}"></i></div><span class="v" style="color:${stCol(v)}">${v}%</span>`}).join('');
-    return `<div class="ln"><span class="nm" style="color:${stCol(l.avg)}">${l.nm}</span><span class="who"><b>${l.ally}</b> vs ${l.enemy} · <span style="color:${stCol(l.avg)}">${stTxt(Math.round(l.avg))}</span>${l.missing?' · 정보 부족':l.mineWait?' · 내 픽 반영 전':''}</span><div class="bars">${bars}</div><span class="tip">${laneTip(l)}</span></div>`;
+    return `<div class="ln"><span class="nm" style="color:${stCol(l.avg)}">${l.nm}</span><span class="who"><b>${l.ally}</b> vs ${l.enemy} · <span style="color:${stCol(l.avg)}">${stTxt(Math.round(l.avg))}</span>${l.missing?' · 정보 부족':l.mineWait?' · 내 픽 반영 전':''}${offRole(l,an,en)}</span><div class="bars">${bars}</div><span class="tip">${laneTip(l)}</span></div>`;
   }).join('');
   const up=L.filter(l=>l.avg>=56).map(l=>l.nm),dn=L.filter(l=>l.avg<=44).map(l=>l.nm);
   $('sum-lanes').textContent=[up.length?'유리 '+up.join(', '):'',dn.length?'불리 '+dn.join(', '):''].filter(Boolean).join(' · ')||'비슷함';
   $('strat').innerHTML=strategy(L).map(t=>`<li>${t}</li>`).join('');
+  return L;
 }
 
 function plan(r){
   const p=[],a=r.adv,peak=a.indexOf(Math.max(...a)),low=a.indexOf(Math.min(...a));
-  if(a[0]>=54)p.push('0~10분: 바텀·강가 주도권이 있어요. 첫 용과 유충을 적극적으로 가져가고, 파이크·블리츠 같은 캐치형이면 로밍으로 상체에 이득을 넘기세요.');
-  else if(a[0]<=46)p.push('0~10분: 초반 교전은 피하고 와드로 상대 정글 동선을 확인하세요. 첫 용은 무리하게 싸우지 말고 교환(유충·포탑)으로 받으세요.');
-  else p.push('0~10분: 비슷한 구간이에요. 상대 정글 위치를 시야로 먼저 파악하는 쪽이 이겨요.');
-  if(a[1]>=54)p.push('10~20분: 우세 구간이에요. 전령·용을 묶어서 미드 1차 포탑을 밀고 맵을 넓히세요.');
-  else if(a[1]<=46)p.push('10~20분: 상대가 강한 구간이에요. 웨이브를 받아먹으며 시야 싸움으로 시간을 버세요.');
+  const L=r.L||[];
+  const side=ph=>({up:L.filter(l=>l.pct[ph]>=56).map(l=>l.nm),dn:L.filter(l=>l.pct[ph]<=44).map(l=>l.nm)});
+  const desc=({up,dn})=>[up.length?`${up.join('·')} 유리`:'',dn.length?`${dn.join('·')} 불리`:''].filter(Boolean).join(', ')||'라인별 차이 작음';
+  const s0=side(0),s1=side(1),t0=[];
+  if(s0.up.includes('BOT'))t0.push('바텀 주도권으로 첫 용을 노리세요');
+  else if(s0.dn.includes('BOT'))t0.push('바텀은 웨이브를 당겨 버티고, 첫 용은 무리하지 말고 유충·포탑으로 교환하세요');
+  if(s0.up.includes('TOP'))t0.push('유충은 탑 주도권으로 챙기세요');
+  else if(s0.dn.includes('TOP'))t0.push('탑은 갱 위험이 커서 와드를 깊게 박아주세요');
+  if(s0.up.includes('MID'))t0.push('미드가 먼저 밀고 바텀·정글 싸움에 합류하세요');
+  else if(s0.dn.includes('MID'))t0.push('상대 미드 로밍을 핑으로 알려주세요');
+  if(s0.up.includes('JGL'))t0.push('정글은 유리한 라인 쪽으로 동선을 잡고 카정을 노리세요');
+  else if(s0.dn.includes('JGL'))t0.push('상대 정글이 더 세니 불리한 라인은 갱 대비');
+  if(!t0.length)t0.push(a[0]>=54?'팀 전체로는 초반이 강해요. 오브젝트를 먼저 가져가세요':a[0]<=46?'초반 교전은 피하고 상대 정글 동선을 시야로 확인하세요':'상대 정글 위치를 시야로 먼저 파악하는 쪽이 이겨요');
+  p.push(`0~10분 (팀 ${a[0]}%): ${desc(s0)}. ${t0.join('. ')}.`);
+  const t1=a[1]>=54?'전령·용을 묶어서 미드 1차 포탑을 밀고 맵을 넓히세요':a[1]<=46?'웨이브를 받아먹으며 시야 싸움으로 시간을 버세요':'오브젝트 1분 전에 시야를 먼저 잡는 쪽이 유리해요';
+  p.push(`10~20분 (팀 ${a[1]}%): ${desc(s1)}. ${t1}.`);
   if(a[2]>=54||a[3]>=54)p.push(`20분 이후: ${a[3]>=a[2]?'30분 이후':'20~30분'}에 가장 강해져요. 이 타이밍에 바론 앞 시야를 먼저 잡고 한타를 거세요.`);
   else if(a[3]<=46)p.push('20분 이후: 시간이 갈수록 불리해져요. 25분 전에 바론이나 억제기로 끝낼 각을 만드세요.');
-  p.push(`가장 강한 구간은 ${PH[peak]}, 가장 약한 구간은 ${PH[low]}이에요.`);
+  p.push(`가장 강한 구간은 ${PH[peak]}, 가장 약한 구간은 ${PH[low]}예요.`);
   if(r.tfAdv<45)p.push('정면 5:5 한타는 불리해요. 상대가 시야 잡으러 올 때 한 명씩 끊는 캐치로 숫자 우위를 먼저 만드세요.');
   return p;
 }
@@ -490,7 +506,8 @@ function render(){
     return `<div class="ph${i===peak&&v>52?' peak':''}"><span class="t">${PH[i]}</span><span class="pct" style="color:${stCol(v)}">${v}%</span><div class="dv"><i style="left:${left}%;width:${width}%;background:${stCol(v)}"></i></div><span class="st" style="color:${stCol(v)}">${stTxt(v)}</span></div>`}).join('');
   $('chart').innerHTML=svgChart(r.adv);
   $('sum-phase').textContent=r.adv.map((v,i)=>`${PH[i]} ${v}%`).join(' · ');
-  renderLanes(an,ap,en);
+  r.L=renderLanes(an,ap,en);
+  for(const l of r.L)if(l.avg<=40&&!l.missing){r.mc=Math.min(95,r.mc+6);r.mcWhy=r.mcWhy.filter(t=>!t.startsWith('구도상 큰 약점'));r.mcWhy.push(`${l.nm} 라인전이 크게 불리해요 (${l.ally} vs ${l.enemy}). ${l.nm==='BOT'?'바텀 1차 포탑을 일찍 잃지 않게 정글·미드가 커버해야 해요':l.nm==='TOP'?'탑은 버티는 운영, 전령 싸움은 불리해요':l.nm==='MID'?'미드가 밀리면 로밍을 막기 어려워요':'정글 싸움을 피하고 라인 주도권이 있는 쪽에서 움직이세요'}.`);}
 
   $('sum-tf').textContent=`${r.tfAdv}% · ${stTxt(r.tfAdv)}`;
   $('tfBig').innerHTML=`<b style="color:${stCol(r.tfAdv)}">${r.tfAdv}%</b><span class="pill" style="color:${stCol(r.tfAdv)}">${stTxt(r.tfAdv)}</span>`;
