@@ -50,6 +50,10 @@ class AggregateTest(unittest.TestCase):
         self.assertEqual(r["gd20"], 800)
         self.assertEqual(r["gd30"], -800)
 
+    def test_matchups(self):
+        self.assertEqual(self.out["champions"]["레넥톤"]["TOP"]["vs"]["나서스"], [80, 40])
+        self.assertEqual(self.out["champions"]["나서스"]["TOP"]["vs"]["레넥톤"], [80, 40])
+
     def test_phase_shape(self):
         ren = self.out["champions"]["레넥톤"]["TOP"]["phase"]
         nas = self.out["champions"]["나서스"]["TOP"]["phase"]

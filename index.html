@@ -96,6 +96,22 @@ button:hover{border-color:var(--brass)}
 .empty{font-size:14px;color:var(--muted);margin:0}
 .idrow{display:grid;gap:6px}
 .idctl{display:flex;gap:8px;max-width:520px}
+.live{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 6px;font-size:14px;font-weight:500;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+.live .ldot{width:9px;height:9px;border-radius:50%;background:var(--muted)}
+.live[data-kind="ok"] .ldot{background:var(--ok)}
+.live[data-kind="wait"] .ldot{background:var(--warn)}
+.live[data-kind="off"] .ldot{background:var(--enemy)}
+.autolbl{margin-left:auto;display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted);cursor:pointer}
+.autolbl input{width:auto;accent-color:var(--brass)}
+.bans{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{font-size:13px;border:1px solid var(--line);border-radius:999px;padding:2px 4px 2px 10px;display:inline-flex;align-items:center;gap:4px;text-decoration:line-through;text-decoration-color:var(--enemy)}
+.chip button{border:0;padding:0 6px;font-size:13px;line-height:1.4;color:var(--muted)}
+.chip.auto{border-style:dashed}
+#banAdd{max-width:190px}
+.rank .x{grid-column:4;justify-self:end;font-size:11px;padding:1px 6px;color:var(--muted)}
+.rank .why{grid-column:2/4}
+.risk{color:var(--enemy)}
 .proftoggle{display:flex;gap:10px;align-items:flex-start;cursor:pointer;font-size:14px}
 .proftoggle input{width:auto;margin-top:4px;accent-color:var(--brass)}
 .noprof .row select{display:none}
@@ -122,7 +138,9 @@ button:hover{border-color:var(--brass)}
 <div class="wrap">
   <header>
     <h1>픽창 판독기</h1>
+    <p class="live" id="live" hidden><span class="ldot" aria-hidden="true"></span><span id="liveText"></span><label class="autolbl"><input type="checkbox" id="autoOn" checked> 자동 채우기</label></p>
     <p>양 팀 10명을 넣으면 0~10분, 10~20분, 20~30분, 30분 이후 구간별 우세와 5:5 한타 구도, 운영 난이도를 보여줘요. 내 포지션을 고르고 그 칸을 비워두면 지금 픽창 상황에 맞는 챔피언을 추천해요.</p>
+    <p class="note" id="helperHint">PC에서 롤을 켜고 <a href="https://github.com/WandaDJ/lol-pick-reader#pc-도우미" style="color:inherit">PC 도우미</a>를 실행하면 픽창의 포지션, 픽, 밴이 자동으로 입력돼요. 챔피언 이름은 초성(예: ㄹㄴㅌ)으로도 입력할 수 있어요.</p>
   </header>
 
   <section class="panel" aria-label="챔피언 입력">
@@ -144,6 +162,7 @@ button:hover{border-color:var(--brass)}
         <div class="team-head"><span class="dot" style="background:var(--enemy)"></span>상대 <span class="note" style="font-weight:400">(보이는 만큼만)</span></div>
       </div>
     </div>
+    <div class="bans"><span class="label">밴</span><span id="banChips" class="chips"></span><input id="banAdd" list="champs" placeholder="밴 추가 (초성 가능)" autocomplete="off" aria-label="밴된 챔피언 추가"></div>
     <p class="warnline" id="badMsg" hidden></p>
     <div class="bar-tools">
       <span style="display:grid;gap:2px"><span class="count" id="count"></span><span class="count" id="dataStatus">데이터: 추정 표 사용 중</span></span>
@@ -181,6 +200,12 @@ button:hover{border-color:var(--brass)}
   <section class="panel" aria-label="게임 플랜">
     <span class="label">이번 판 게임 플랜</span>
     <ul class="list" id="plan"></ul>
+  </section>
+
+  <section class="panel" aria-label="밴 추천">
+    <span class="label" id="banTitle">밴 추천</span>
+    <div class="ranks" id="banRecs"></div>
+    <p class="note" id="banNote"></p>
   </section>
 
   <section class="panel" aria-label="추천 챔피언">
@@ -265,10 +290,18 @@ function applyPos(){
 }
 function applyFilter(){$('fPool').setAttribute('aria-pressed',String(ONLY_POOL));$('fAll').setAttribute('aria-pressed',String(!ONLY_POOL));store.set('pr.only',ONLY_POOL?'1':'0');}
 
+const CHO='ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ';
+function cho(s){let o='';for(const ch of s.replace(/\s+/g,'')){const c=ch.charCodeAt(0)-0xAC00;o+=(c>=0&&c<11172)?CHO[Math.floor(c/588)]:ch;}return o;}
+const loose=s=>s.replace(/[ㄲㄸㅃㅆㅉ]/g,m=>({'ㄲ':'ㄱ','ㄸ':'ㄷ','ㅃ':'ㅂ','ㅆ':'ㅅ','ㅉ':'ㅈ'})[m]);
 function find(v){
   const s=norm(v||'');if(!s)return null;
   for(const k of NAMES)if(norm(k)===s)return k;
   for(const [a,k] of Object.entries(ALIAS))if(norm(a)===s)return k;
+  if(/^[ㄱ-ㅎ]+$/.test(s)){ // 초성 입력: ㄹㄴㅌ → 레넥톤
+    const L=loose(s);
+    const exact=NAMES.filter(k=>loose(cho(k))===L);if(exact.length===1)return exact[0];
+    const pre=NAMES.filter(k=>loose(cho(k)).startsWith(L));if(pre.length===1)return pre[0];
+  }
   return undefined;
 }
 // 구간 값: 0-10 / 10-20 / 20-30 / 30+
@@ -444,42 +477,163 @@ function render(){
   // 추천: 내 자리에 각 후보를 넣어 재계산
   const lane=LANES[MY],mine=an[MY],foe=en[MY];
   $('rkTitle').textContent=mine?`${lane} 추천 (현재 선택: ${mine})`:`${lane} 추천 챔피언`;
-  const others=an.map((v,i)=>i===MY?null:v);
-  const ca0=comp(others);
-  const taken=new Set([...en.filter(Boolean),...others.filter(Boolean)]);
-  const pool=new Set(poolList());
-  let cands=R[lane].filter(c=>!taken.has(c));
-  if(ONLY_POOL)cands=cands.filter(c=>pool.has(c));
-  const base=(()=>{const x=analyze(others,ap,en);return x.adv.reduce((s,v)=>s+v,0)/4})();
-  const rows=cands.map(c=>{
-    const t=others.slice();t[MY]=c;const x=analyze(t,ap,en);
-    const avg=x.adv.reduce((s,v)=>s+v,0)/4;
-    let lanePart=0;
-    const pc=phaseOf(c,MY),pf=foe?phaseOf(foe,MY):null;
-    if(foe){lanePart=(pc.v[0]-pf.v[0])*3;}
-    const score=clamp(avg+.6*(x.tfAdv-50)-.35*(x.mc-50)+lanePart+(pool.has(c)?2:0),0,100);
-    const own=pc.v;
-    const mx=Math.max(...own);
-    const peaks=own.map((v,i)=>v===mx?i:-1).filter(i=>i>=0);
-    const w=[];
-    w.push(`본인 전성기 ${peaks.length===4?'전 구간 고름':peaks.map(i=>PH[i]).join(', ')}`);
-    if(ca0.n>=2&&!ca0.E&&D[c][4].includes('E'))w.push('부족한 이니시 채움');
-    if(ca0.n>=2&&!ca0.F&&D[c][4].includes('F'))w.push('부족한 앞라인 채움');
-    if(ca0.n>=3&&ca0.m===0&&D[c][4].includes('M'))w.push('마법 피해 보충');
-    if(ca0.n>=3&&ca0.a===0&&D[c][4].includes('A'))w.push('물리 피해 보충');
-    if(foe){const d=pc.v[0]-pf.v[0];w.push(`vs ${foe} 라인전 ${d>0?'유리':d<0?'불리':'비슷'}`);}
-    w.push(`팀 평균 우세 ${avg-base>=0?'+':''}${(avg-base).toFixed(1)} · 한타 ${x.tfAdv}%`);
-    w.push(pc.src==='stat'?`통계 ${pc.games}판 · 승률 ${(pc.wr*100).toFixed(1)}%`:'추정값');
-    const det=poolDetail()[c];
-    if(det){
-      if(det.games>0)w.push(`내 기록 ${det.games}판 ${det.wins}승`+(det.games<5?' · 표본 적음':` (${Math.round(det.wins/det.games*100)}%)`));
-      else if(det.mastery)w.push(`최근 기록 없음 · 숙련도 ${(det.mastery/10000).toFixed(1)}만 점`);
-    }
-    return {c,score:clamp(score+(det&&det.games?Math.min(4,det.games/5):0),0,100),w:w.join(' · '),mine:pool.has(c),games:det&&det.games,mastery:det&&det.mastery};
-  }).sort((a,b)=>b.score-a.score).slice(0,12);
-  $('ranks').innerHTML=rows.length?rows.map((o,i)=>`<div class="rank"><span class="n">${i+1}</span><span class="name">${o.c}${o.mine?`<span class="badge">${o.games?o.games+'판':o.mastery?'숙련도':'챔프폭'}</span>`:''}</span><span class="bar"><i style="width:${Math.round(o.score)}%"></i></span><span class="v">${Math.round(o.score)}</span><span class="why">${o.w}</span></div>`).join('')
+  const ctx=recContext(an,ap,en);
+  let cands=R[lane].filter(c=>!ctx.taken.has(c));
+  if(ONLY_POOL)cands=cands.filter(c=>ctx.pool.has(c));
+  const rows=cands.map(c=>scoreCand(c,ctx,foe)).sort((a,b)=>b.score-a.score).slice(0,12);
+  $('ranks').innerHTML=rows.length?rows.map((o,i)=>`<div class="rank"><span class="n">${i+1}</span><span class="name">${o.c}${o.mine?`<span class="badge">${o.games?o.games+'판':o.mastery?'숙련도':'챔프폭'}</span>`:''}</span><span class="bar"><i style="width:${Math.round(o.score)}%"></i></span><span class="v">${Math.round(o.score)}</span><span class="why">${o.w}</span><button type="button" class="x" data-ban="${o.c}" aria-label="${o.c} 밴됨으로 표시">밴됨</button></div>`).join('')
     :`<p class="empty">${ONLY_POOL?`${lane} 챔프폭에 남은 챔피언이 없어요. 위 칸에 챔프폭을 넣거나 '전체'로 바꿔보세요.`:'추천할 챔피언이 없어요.'}</p>`;
+  renderBanRecs(ctx,foe);
+  renderBanChips();
 }
+
+// ---- 추천 점수
+function banned(){return new Set([...helperBans,...manualBans].map(b=>find(b)||b));}
+function recContext(an,ap,en){
+  const others=an.map((v,i)=>i===MY?null:v);
+  const enNoMe=en.map((v,i)=>i===MY?null:v);
+  const B=banned();
+  const taken=new Set([...en.filter(Boolean),...others.filter(Boolean),...B]);
+  const base=(()=>{const x=analyze(others,ap,en);return x.adv.reduce((s,v)=>s+v,0)/4})();
+  return {others,ap,en,enNoMe,taken,B,base,ca0:comp(others),pool:new Set(poolList()),lane:LANES[MY]};
+}
+function matchup(c,foe,lane){
+  const s=STATS&&STATS[norm(c)],r=s&&s[LANES[lane]];
+  if(!r||!r.vs)return null;
+  const k=Object.keys(r.vs).find(x=>norm(x)===norm(foe));if(!k)return null;
+  const [g,w]=r.vs[k];if(g<10)return null;
+  return {wr:(w+10)/(g+20),games:g};
+}
+function scoreCand(c,ctx,foe){
+  const t=ctx.others.slice();t[MY]=c;
+  const en2=ctx.en.slice();en2[MY]=foe||null;
+  const x=analyze(t,ctx.ap,en2);
+  const avg=x.adv.reduce((s,v)=>s+v,0)/4;
+  const pc=phaseOf(c,MY);
+  const w=[];
+  const own=pc.v,mx=Math.max(...own),peaks=own.map((v,i)=>v===mx?i:-1).filter(i=>i>=0);
+  w.push(`본인 전성기 ${peaks.length===4?'전 구간 고름':peaks.map(i=>PH[i]).join(', ')}`);
+  const ca0=ctx.ca0;
+  if(ca0.n>=2&&!ca0.E&&D[c][4].includes('E'))w.push('부족한 이니시 채움');
+  if(ca0.n>=2&&!ca0.F&&D[c][4].includes('F'))w.push('부족한 앞라인 채움');
+  if(ca0.n>=3&&ca0.m===0&&D[c][4].includes('M'))w.push('마법 피해 보충');
+  if(ca0.n>=3&&ca0.a===0&&D[c][4].includes('A'))w.push('물리 피해 보충');
+  let lanePart=0;
+  if(foe){
+    const m=matchup(c,foe,MY);
+    if(m){lanePart=(m.wr-0.5)*80;w.push(`vs ${foe} 상성 ${Math.round(m.wr*100)}% (${m.games}판)`);}
+    else{const d=pc.v[0]-phaseOf(foe,MY).v[0];lanePart=d*3;w.push(`vs ${foe} 라인전 ${d>0?'유리':d<0?'불리':'비슷'}`);}
+  }else{
+    // 상대 라이너를 모를 때(먼저 뽑을 때): 나올 수 있는 상대 전체를 기준으로 안전한지
+    const foes=R[ctx.lane].filter(f=>f!==c&&!ctx.taken.has(f));
+    const ms=foes.map(f=>[f,matchup(c,f,MY)]).filter(z=>z[1]);
+    if(ms.length>=5){
+      const mean=ms.reduce((s,z)=>s+z[1].wr,0)/ms.length;
+      const counters=ms.filter(z=>z[1].wr<0.46).sort((a,b)=>a[1].wr-b[1].wr);
+      lanePart=(mean-0.5)*40-(counters.length>=3?3:0);
+      w.push(counters.length?`<span class="risk">블라인드 주의: ${counters.slice(0,2).map(z=>z[0]).join(', ')}에 약함</span>`:'블라인드 픽 무난');
+    }else{
+      const e=pc.v[0],meanFoe=foes.length?foes.reduce((s,f)=>s+phaseOf(f,MY).v[0],0)/foes.length:3;
+      lanePart=(e-meanFoe)*1.5;
+      if(e<=2)w.push('<span class="risk">블라인드 주의: 초반이 약해 카운터 당하기 쉬움 (추정)</span>');
+    }
+  }
+  w.push(`팀 평균 우세 ${avg-ctx.base>=0?'+':''}${(avg-ctx.base).toFixed(1)} · 한타 ${x.tfAdv}%`);
+  w.push(pc.src==='stat'?`통계 ${pc.games}판 · 승률 ${(pc.wr*100).toFixed(1)}%`:'추정값');
+  const det=poolDetail()[c];
+  if(det){
+    if(det.games>0)w.push(`내 기록 ${det.games}판 ${det.wins}승`+(det.games<5?' · 표본 적음':` (${Math.round(det.wins/det.games*100)}%)`));
+    else if(det.mastery)w.push(`최근 기록 없음 · 숙련도 ${(det.mastery/10000).toFixed(1)}만 점`);
+  }
+  const score=clamp(avg+.6*(x.tfAdv-50)-.35*(x.mc-50)+lanePart+(ctx.pool.has(c)?2:0)+(det&&det.games?Math.min(4,det.games/5):0),0,100);
+  return {c,score,w:w.join(' · '),mine:ctx.pool.has(c),games:det&&det.games,mastery:det&&det.mastery};
+}
+
+// ---- 밴 추천: 내 라인에 나오면 내 최선 픽 점수를 가장 많이 깎는 상대
+function renderBanRecs(ctx,foe){
+  const lane=ctx.lane;
+  $('banTitle').textContent=`밴 추천 (${lane} 기준)`;
+  if(foe){$('banRecs').innerHTML='';$('banNote').textContent=`상대 ${lane}가 ${foe}(으)로 정해져서 밴 추천은 필요 없어요.`;return;}
+  let mineList=[...ctx.pool].filter(c=>R[lane].includes(c)&&!ctx.taken.has(c));
+  const usingPool=mineList.length>0;
+  if(!usingPool)mineList=R[lane].filter(c=>!ctx.taken.has(c)).map(c=>scoreCand(c,ctx,null)).sort((a,b)=>b.score-a.score).slice(0,6).map(o=>o.c);
+  if(!mineList.length){$('banRecs').innerHTML='';$('banNote').textContent='';return;}
+  const best=f=>{let b={c:'',score:-1};for(const c of mineList){if(c===f)continue;const o=scoreCand(c,ctx,f);if(o.score>b.score)b=o;}return b;};
+  const normal=best(null);
+  const myAll=new Set([...ctx.pool,...mineList,ctx.en&&null,$('a'+MY).value&&find($('a'+MY).value)].filter(Boolean));
+  const threats=R[lane].filter(f=>!ctx.taken.has(f)&&!myAll.has(f)).slice(0,60).map(f=>({f,b:best(f)})).sort((a,b)=>a.b.score-b.b.score).slice(0,3);
+  $('banRecs').innerHTML=threats.map((t,i)=>{const drop=Math.max(0,normal.score-t.b.score);
+    return `<div class="rank"><span class="n">${i+1}</span><span class="name">${t.f}</span><span class="bar"><i style="width:${Math.min(100,Math.round(drop*5))}%;background:var(--enemy)"></i></span><span class="v">-${Math.round(drop)}</span><span class="why">이 챔피언이 상대 ${lane}로 나오면 내 최선 픽 ${t.b.c} ${Math.round(t.b.score)}점 (평소 ${normal.c} ${Math.round(normal.score)}점)</span></div>`}).join('');
+  $('banNote').textContent=usingPool?`내 ${lane} 챔프폭(${mineList.length}개) 기준이에요.`:`챔프폭이 없어 지금 추천 상위 ${mineList.length}개 기준으로 계산했어요. 아이디로 챔프폭을 불러오면 더 정확해요.`+(STATS?'':' 상성 통계가 없어 초반 강도 추정치로 계산해요.');
+}
+
+// ---- 밴 표시
+let manualBans=[],helperBans=[];
+function renderBanChips(){
+  const auto=new Set(helperBans.map(b=>find(b)||b));
+  const all=[...auto,...manualBans.filter(b=>!auto.has(b))];
+  $('banChips').innerHTML=all.length?all.map(b=>auto.has(b)?`<span class="chip auto" title="클라이언트에서 가져온 밴">${b}</span>`:`<span class="chip">${b}<button type="button" data-unban="${b}" aria-label="${b} 밴 해제">✕</button></span>`).join(''):'<span class="note">없음</span>';
+}
+function addBan(v){const k=find(v);if(!k)return false;if(!manualBans.includes(k))manualBans.push(k);render();return true;}
+$('ranks').addEventListener('click',ev=>{const b=ev.target.closest('[data-ban]');if(b)addBan(b.dataset.ban);});
+$('banChips').addEventListener('click',ev=>{const b=ev.target.closest('[data-unban]');if(!b)return;manualBans=manualBans.filter(x=>x!==b.dataset.unban);render();});
+$('banAdd').addEventListener('change',()=>{if(addBan($('banAdd').value))$('banAdd').value='';});
+$('banAdd').addEventListener('keydown',ev=>{if(ev.key==='Enter'){ev.preventDefault();if(addBan($('banAdd').value))$('banAdd').value='';}});
+
+// ---- 초성으로 입력한 칸은 확정 시 전체 이름으로 바꿈
+function expandCho(el){const v=el.value.trim();if(/^[ㄱ-ㅎ]+$/.test(norm(v))){const k=find(v);if(k){el.value=k;render();}}}
+LANES.forEach((l,i)=>{['a','e'].forEach(p=>{const el=$(p+i);el.addEventListener('change',()=>expandCho(el));el.addEventListener('keydown',ev=>{if(ev.key==='Enter')expandCho(el);});});});
+
+// ---- 상대 포지션 추정 (랭크 픽창은 상대 포지션이 안 보임)
+function laneCount(c){return LANES.filter(l=>R[l].includes(c)).length||1;}
+function laneFit(c,i){
+  const s=STATS&&STATS[norm(c)];
+  if(s){const tot=Object.values(s).reduce((t,r)=>t+r.games,0)||1;const r=s[LANES[i]];if(r)return 1+3*r.games/tot;}
+  return R[LANES[i]].includes(c)?1+1/laneCount(c):0;
+}
+function inferLanes(list,occ){
+  const out=['','','','',''],free=[0,1,2,3,4].filter(i=>!occ[i]);
+  list=list.slice(0,free.length);
+  let best=-1,bestA=null;
+  const rec=(k,used,acc,sc)=>{if(k===list.length){if(sc>best){best=sc;bestA=acc.slice();}return;}
+    for(const i of free){if(used&(1<<i))continue;acc[k]=i;rec(k+1,used|(1<<i),acc,sc+laneFit(list[k],i));}};
+  rec(0,0,[],0);
+  if(bestA)bestA.forEach((i,k)=>out[i]=list[k]);
+  return out;
+}
+
+// ---- PC 도우미 연결 (도우미가 띄운 http://127.0.0.1:27150 에서만 동작)
+const LOCAL=/^(127\.0\.0\.1|localhost)$/.test(location.hostname);
+let AUTO=true,lastAuto={},liveSig='';
+function showLive(text,kind){$('live').hidden=false;$('liveText').textContent=text;$('live').dataset.kind=kind;}
+function ensureChamp(name){if(!name)return '';const k=find(name);if(k)return k;D[name]=[3,3,3,3,''];fillNames();return name;}
+function setAuto(id,val){val=val||'';if(lastAuto[id]!==val){$(id).value=val;lastAuto[id]=val;}}
+function applyHelper(st){
+  if(st.client!=='connected'){showLive(st.client==='error'?'클라이언트 응답을 읽지 못했어요. 도우미를 다시 켜보세요.':'롤 클라이언트를 기다리는 중이에요. 클라이언트를 켜면 자동으로 연결돼요.','wait');return;}
+  if(!st.inChampSelect){showLive('클라이언트 연결됨 · 픽창이 시작되면 자동으로 채워요.','ok');if(liveSig){liveSig='';lastAuto={};helperBans=[];render();}return;}
+  const turn=st.myTurn==='pick'?' · 내 차례: 픽':st.myTurn==='ban'?' · 내 차례: 밴':'';
+  showLive(`픽창 자동 입력 중 · 아군 ${st.allies.filter(a=>a.locked).length}명 확정 · 상대 ${st.enemies.length}명 공개${turn}`,'ok');
+  if(!AUTO)return;
+  const sig=JSON.stringify([st.myPosition,st.allies,st.enemies,st.bans]);
+  if(sig===liveSig)return;
+  if(!liveSig){manualBans=[];} // 새 픽창 시작
+  liveSig=sig;
+  if(st.myPosition&&lastAuto.pos!==st.myPosition){const i=LANES.indexOf(st.myPosition);if(i>=0){MY=i;applyPos();}lastAuto.pos=st.myPosition;}
+  const a=['','','','',''],noLane=[];
+  for(const x of st.allies){const k=ensureChamp(x.champ);const i=x.lane?LANES.indexOf(x.lane):-1;if(i>=0)a[i]=k;else if(k)noLane.push(k);}
+  if(noLane.length)inferLanes(noLane,a).forEach((k,i)=>{if(k)a[i]=k;});
+  const e=inferLanes(st.enemies.map(x=>ensureChamp(x.champ)).filter(Boolean),['','','','','']);
+  LANES.forEach((l,i)=>{setAuto('a'+i,a[i]);setAuto('e'+i,e[i]);});
+  helperBans=(st.bans||[]).map(b=>ensureChamp(b));
+  render();
+}
+async function pollHelper(){
+  try{const r=await fetch('/state',{cache:'no-store'});applyHelper(await r.json());}
+  catch(e){showLive('도우미와 연결이 끊겼어요. 도우미 창이 켜져 있는지 확인하세요.','off');}
+  setTimeout(pollHelper,1000);
+}
+$('autoOn').addEventListener('change',()=>{AUTO=$('autoOn').checked;if(AUTO){liveSig='';lastAuto={};}});
+if(LOCAL){$('helperHint').hidden=true;pollHelper();}
 
 LANES.forEach((l,i)=>{$('a'+i).addEventListener('input',render);$('e'+i).addEventListener('input',render);$('p'+i).addEventListener('change',render);});
 $('posSeg').addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;MY=+b.dataset.i;applyPos();render();});
@@ -493,7 +647,7 @@ applyPos();applyFilter();applyProf();
 function setAll(a,e,p){LANES.forEach((l,i)=>{$('a'+i).value=a[i]||'';$('e'+i).value=e[i]||'';$('p'+i).value=String(p[i]||0);});render();}
 // 포지션별 챔피언 목록에서 겹치지 않게 무작위로 10명 뽑기 (내 자리는 비워서 추천이 보이게)
 function sample(){
-  const used=new Set(),pick=lane=>{const pool=R[LANES[lane]].filter(c=>!used.has(c));const c=pool[Math.floor(Math.random()*pool.length)];used.add(c);return c;};
+  const used=new Set(banned()),pick=lane=>{const pool=R[LANES[lane]].filter(c=>!used.has(c));const c=pool[Math.floor(Math.random()*pool.length)];used.add(c);return c;};
   const a=LANES.map((l,i)=>pick(i)),e=LANES.map((l,i)=>pick(i));
   a[MY]='';
   setAll(a,e,[0,0,0,0,0]);

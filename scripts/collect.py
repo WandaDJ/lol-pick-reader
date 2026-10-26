@@ -206,6 +206,7 @@ def aggregate(records: list[dict], champ_names: dict[str, str], patches: list[st
         "gd10": [0.0, 0], "gain20": [0.0, 0], "gain30": [0.0, 0],
         "len": {b[0]: [0, 0] for b in LENGTH_BUCKETS},
         "long": [0, 0],
+        "vs": collections.defaultdict(lambda: [0, 0]),
     })
     used = 0
     for rec in records:
@@ -230,6 +231,9 @@ def aggregate(records: list[dict], champ_names: dict[str, str], patches: list[st
                 a["long"][1] += p["win"]
             if not opp:
                 continue
+            vs = a["vs"][opp["champ"]]
+            vs[0] += 1
+            vs[1] += p["win"]
             g, og = p["gold"], opp["gold"]
             d = {m: g[m] - og[m] for m in ("10", "20", "30") if m in g and m in og}
             if "10" in d:
@@ -265,6 +269,9 @@ def aggregate(records: list[dict], champ_names: dict[str, str], patches: list[st
             "gd30": round(mean(a["gd10"]) + mean(a["gain20"]) + mean(a["gain30"])),
             "wrByLength": {k: {"games": v[0], "winRate": round(v[1] / v[0], 4) if v[0] else None} for k, v in a["len"].items()},
             "phase": phase,
+            # 맞라이너별 [판수, 승수] (5판 이상만)
+            "vs": {champ_names.get(o.lower(), o): v for o, v in sorted(a["vs"].items(), key=lambda kv: -kv[1][0])
+                   if v[0] >= 5},
         }
     return {"matchesUsed": used, "champions": champions}
 

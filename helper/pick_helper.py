@@ -1,0 +1,355 @@
+#!/usr/bin/env python3
+"""
+픽창 판독기 PC 도우미
+
+롤 클라이언트가 켜져 있으면 클라이언트의 로컬 API(LCU)에서 픽창 상태를 읽어
+http://127.0.0.1:27150/ 에 픽창 판독기 페이지를 띄우고 자동으로 채워줍니다.
+
+- 읽는 정보: 내 포지션, 양 팀 챔피언(확정·고민 중), 밴, 지금 누구 차례인지
+- 읽지 않는 정보: 아군·상대의 닉네임, 계정 ID 등 개인 정보 (Riot 정책상 금지)
+- 모든 통신은 내 PC 안(127.0.0.1)에서만 이뤄지고, 외부로는 페이지 최신본을 받아올 때만 접속해요.
+
+실행: python3 pick_helper.py      (Python 3.9 이상, 외부 패키지 필요 없음)
+종료: 이 창을 닫거나 Ctrl+C
+"""
+from __future__ import annotations
+
+import base64
+import json
+import os
+import platform
+import re
+import ssl
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+import webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+VERSION = "1.0.0"
+PORT = int(os.environ.get("PICK_HELPER_PORT", "27150"))
+SITE = os.environ.get("PICK_HELPER_SITE", "https://wandadj.github.io/lol-pick-reader/")
+SITE_FILES = ["index.html", "data/stats.json", "data/config.json"]
+LANE = {"top": "TOP", "jungle": "JGL", "middle": "MID", "bottom": "ADC", "utility": "SUP"}
+ALLOWED_ORIGINS = {"https://wandadj.github.io", f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}"}
+
+
+# ---------------------------------------------------------------- 경로
+def bundled_dir() -> Path:
+    """실행 파일에 묶인 페이지 사본 위치 (없으면 저장소 루트)."""
+    if hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / "site"
+    return Path(__file__).resolve().parents[1]
+
+
+def cache_dir() -> Path:
+    d = Path.home() / ".lol-pick-reader" / "site"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def https_context() -> ssl.SSLContext:
+    try:
+        import certifi  # 실행 파일 빌드에 포함됨
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
+# ---------------------------------------------------------------- 클라이언트 찾기
+def lockfile_candidates() -> list[Path]:
+    env = os.environ.get("LOL_LOCKFILE")
+    if env:
+        return [Path(env)]
+    system = platform.system()
+    if system == "Darwin":
+        return [
+            Path("/Applications/League of Legends.app/Contents/LoL/lockfile"),
+            Path.home() / "Applications/League of Legends.app/Contents/LoL/lockfile",
+        ]
+    if system == "Windows":
+        out = []
+        for drive in "CDEFG":
+            out += [Path(f"{drive}:/Riot Games/League of Legends/lockfile"),
+                    Path(f"{drive}:/Program Files/Riot Games/League of Legends/lockfile")]
+        return out
+    return []
+
+
+def parse_lockfile(text: str) -> tuple[int, str] | None:
+    """lockfile 형식: 이름:PID:포트:비밀번호:프로토콜"""
+    parts = text.strip().split(":")
+    if len(parts) >= 5 and parts[2].isdigit():
+        return int(parts[2]), parts[3]
+    return None
+
+
+def parse_process_args(args: str) -> tuple[int, str] | None:
+    port = re.search(r"--app-port=(\d+)", args)
+    token = re.search(r"--remoting-auth-token=([\w-]+)", args)
+    if port and token:
+        return int(port.group(1)), token.group(1)
+    return None
+
+
+def credentials_from_process() -> tuple[int, str] | None:
+    """lockfile을 못 찾을 때: 실행 중인 클라이언트의 실행 인자에서 찾기 (설치 위치가 다른 경우)."""
+    try:
+        if platform.system() == "Windows":
+            cmd = ["powershell", "-NoProfile", "-Command",
+                   "Get-CimInstance Win32_Process -Filter \"name='LeagueClientUx.exe'\" | "
+                   "Select-Object -ExpandProperty CommandLine"]
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=8, creationflags=flags).stdout
+        else:
+            out = subprocess.run(["ps", "-A", "-o", "args="], capture_output=True, text=True, timeout=8).stdout
+        for line in out.splitlines():
+            if "LeagueClientUx" in line:
+                found = parse_process_args(line)
+                if found:
+                    return found
+    except Exception:
+        pass
+    return None
+
+
+def find_credentials() -> tuple[int, str] | None:
+    for p in lockfile_candidates():
+        try:
+            if p.exists():
+                found = parse_lockfile(p.read_text(encoding="utf-8", errors="ignore"))
+                if found:
+                    return found
+        except OSError:
+            continue
+    return credentials_from_process()
+
+
+# ---------------------------------------------------------------- 클라이언트 API
+class NotRunning(Exception):
+    pass
+
+
+class LCU:
+    def __init__(self):
+        self.creds: tuple[int, str] | None = None
+        self.names: dict[int, str] = {}
+        self.ctx = ssl.create_default_context()
+        self.ctx.check_hostname = False
+        self.ctx.verify_mode = ssl.CERT_NONE  # 클라이언트는 자체 서명 인증서를 씀 (127.0.0.1 전용)
+
+    def get(self, path: str):
+        if not self.creds:
+            self.creds = find_credentials()
+            self.names = {}
+            if not self.creds:
+                raise NotRunning()
+        port, pw = self.creds
+        token = base64.b64encode(f"riot:{pw}".encode()).decode()
+        req = urllib.request.Request(f"https://127.0.0.1:{port}{path}",
+                                     headers={"Authorization": f"Basic {token}", "Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(req, context=self.ctx, timeout=3) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            if e.code == 404:  # 픽창이 아님
+                return None
+            if e.code in (401, 403):
+                self.creds = None
+                raise NotRunning()
+            raise
+        except (urllib.error.URLError, ConnectionError, TimeoutError, OSError):
+            self.creds = None
+            raise NotRunning()
+
+    def champion_names(self) -> dict[int, str]:
+        if not self.names:
+            rows = self.get("/lol-game-data/assets/v1/champion-summary.json") or []
+            self.names = {int(r["id"]): r["name"] for r in rows if int(r.get("id", -1)) > 0}
+        return self.names
+
+
+# ---------------------------------------------------------------- 픽창 해석
+def parse_session(sess: dict | None, names: dict[int, str]) -> dict:
+    """
+    클라이언트 픽창 정보를 페이지용으로 정리.
+    챔피언·포지션·밴·차례만 남기고 소환사 이름, ID, puuid 등은 버린다.
+    """
+    if not sess:
+        return {"inChampSelect": False}
+    me = sess.get("localPlayerCellId")
+    actions = [a for group in (sess.get("actions") or []) for a in group]
+
+    locked = {a.get("actorCellId") for a in actions if a.get("type") == "pick" and a.get("completed")}
+    bans = set()
+    for a in actions:
+        if a.get("type") == "ban" and a.get("completed") and (a.get("championId") or 0) > 0:
+            bans.add(names.get(a["championId"]))
+    b = sess.get("bans") or {}
+    for cid in (b.get("myTeamBans") or []) + (b.get("theirTeamBans") or []):
+        if cid and cid > 0:
+            bans.add(names.get(cid))
+    bans.discard(None)
+
+    my_turn = None
+    for a in actions:
+        if a.get("actorCellId") == me and a.get("isInProgress") and not a.get("completed"):
+            my_turn = a.get("type")
+
+    allies = []
+    for p in sess.get("myTeam") or []:
+        cid = p.get("championId") or 0
+        intent = p.get("championPickIntent") or 0
+        chosen = cid if cid > 0 else intent
+        allies.append({
+            "lane": LANE.get(str(p.get("assignedPosition") or "").lower()),
+            "champ": names.get(chosen) if chosen > 0 else None,
+            "locked": p.get("cellId") in locked and cid > 0,
+            "me": p.get("cellId") == me,
+        })
+
+    enemies = []
+    for p in sess.get("theirTeam") or []:
+        cid = p.get("championId") or 0
+        if cid > 0:
+            enemies.append({"champ": names.get(cid)})
+
+    me_row = next((a for a in allies if a["me"]), None)
+    return {
+        "inChampSelect": True,
+        "phase": (sess.get("timer") or {}).get("phase"),
+        "myPosition": me_row and me_row["lane"],
+        "myTurn": my_turn,
+        "allies": allies,
+        "enemies": enemies,
+        "bans": sorted(bans),
+    }
+
+
+# ---------------------------------------------------------------- 상태 갱신
+STATE = {"helper": VERSION, "client": "waiting", "inChampSelect": False, "updated": 0}
+LOCK = threading.Lock()
+
+
+def poll_loop(lcu: LCU, interval: float = 1.0):
+    last_msg = None
+    while True:
+        try:
+            names = lcu.champion_names()
+            sess = lcu.get("/lol-champ-select/v1/session")
+            st = parse_session(sess, names)
+            st.update(client="connected")
+            msg = "픽창 진행 중" if st["inChampSelect"] else "클라이언트 연결됨 · 픽창 대기 중"
+            wait = interval
+        except NotRunning:
+            st = {"client": "waiting", "inChampSelect": False}
+            msg = "롤 클라이언트를 기다리는 중이에요"
+            wait = 3.0
+        except Exception as e:  # 클라이언트 업데이트 등으로 응답 형식이 바뀐 경우
+            st = {"client": "error", "inChampSelect": False, "error": str(e)[:200]}
+            msg = f"클라이언트 응답을 읽지 못했어요: {e}"
+            wait = 3.0
+        st.update(helper=VERSION, updated=time.time())
+        with LOCK:
+            STATE.clear()
+            STATE.update(st)
+        if msg != last_msg:
+            print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+            last_msg = msg
+        time.sleep(wait)
+
+
+def refresh_site():
+    """페이지 최신본을 받아 캐시에 저장. 실패하면 실행 파일에 묶인 사본을 씀."""
+    ctx = https_context()
+    for f in SITE_FILES:
+        try:
+            with urllib.request.urlopen(SITE + f, context=ctx, timeout=10) as r:
+                data = r.read()
+            dest = cache_dir() / f
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(data)
+        except Exception:
+            pass
+
+
+def site_file(name: str) -> bytes | None:
+    for base in (cache_dir(), bundled_dir()):
+        p = base / name
+        if p.is_file():
+            return p.read_bytes()
+    return None
+
+
+# ---------------------------------------------------------------- 내 PC 전용 서버
+class Handler(BaseHTTPRequestHandler):
+    server_version = f"PickHelper/{VERSION}"
+
+    def cors(self):
+        origin = self.headers.get("Origin")
+        if origin in ALLOWED_ORIGINS:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+            self.send_header("Access-Control-Allow-Private-Network", "true")
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.cors()
+        self.send_header("Access-Control-Allow-Methods", "GET")
+        self.end_headers()
+
+    def do_GET(self):
+        path = self.path.split("?")[0].lstrip("/") or "index.html"
+        if path == "state":
+            with LOCK:
+                body = json.dumps(STATE, ensure_ascii=False).encode("utf-8")
+            ctype = "application/json; charset=utf-8"
+        elif path in SITE_FILES:
+            body = site_file(path)
+            if body is None:
+                self.send_error(404)
+                return
+            ctype = "text/html; charset=utf-8" if path.endswith(".html") else "application/json; charset=utf-8"
+        else:
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.cors()
+        self.send_header("Content-Type", ctype)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+def main():
+    url = f"http://127.0.0.1:{PORT}/"
+    print(f"픽창 판독기 PC 도우미 {VERSION}")
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    except OSError:
+        print("이미 실행 중이에요. 브라우저를 엽니다.")
+        webbrowser.open(url)
+        return
+    if not os.environ.get("PICK_HELPER_NO_UPDATE"):
+        refresh_site()
+    threading.Thread(target=poll_loop, args=(LCU(),), daemon=True).start()
+    print(f"브라우저에서 {url} 를 여세요. (자동으로 열려요)")
+    print("끝내려면 이 창을 닫거나 Ctrl+C를 누르세요.\n")
+    if not os.environ.get("PICK_HELPER_NO_BROWSER"):
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n종료합니다.")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,69 @@
+name: PC 도우미 빌드
+
+on:
+  push:
+    tags: ["helper-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset: PickHelper-Windows.zip
+          - os: macos-latest
+            asset: PickHelper-Mac.zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 테스트
+        run: python -m unittest discover tests
+
+      - name: 실행 파일 만들기
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller certifi
+          pyinstaller --onefile --name PickHelper --hidden-import certifi --add-data "index.html:site" --add-data "data:site/data" helper/pick_helper.py
+
+      - name: 압축 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path dist/PickHelper.exe -DestinationPath ${{ matrix.asset }}
+
+      - name: 압축 (Mac)
+        if: runner.os == 'macOS'
+        run: ditto -c -k --keepParent dist/PickHelper ${{ matrix.asset }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/helper-v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: PC 도우미 ${{ github.ref_name }}
+          body: |
+            픽창 판독기 PC 도우미입니다. 롤 클라이언트의 픽창(포지션, 픽, 밴)을 자동으로 읽어 판독기에 채워줘요.
+            - Windows: PickHelper-Windows.zip 압축을 풀고 PickHelper.exe 실행
+            - Mac (Apple 실리콘): PickHelper-Mac.zip 압축을 풀고 PickHelper 실행
+            처음 실행할 때 나오는 보안 경고는 README의 "PC 도우미" 항목을 참고하세요.
+          files: dist/*.zip
