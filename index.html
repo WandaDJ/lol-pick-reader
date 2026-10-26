@@ -299,7 +299,7 @@ const PH=["0~10분","10~20분","20~30분","30분 이후"];
 const $=id=>document.getElementById(id);
 const norm=s=>s.replace(/\s+/g,'').toLowerCase();
 // 페이지를 고칠 때마다 올리는 버전 (날짜.번호)
-const PAGE_VERSION='2026.10.27.6';
+const PAGE_VERSION='2026.10.27.7';
 let HELPER_VER=null;
 function updateVer(){
   const el=document.getElementById('verLine');if(!el)return;
@@ -616,11 +616,15 @@ function scoreCand(c,ctx,foe){
   w.push(`팀 평균 우세 ${avg-ctx.base>=0?'+':''}${(avg-ctx.base).toFixed(1)} · 한타 ${x.tfAdv}%`);
   w.push(pc.src==='stat'?`통계 ${pc.games}판 · 승률 ${(pc.wr*100).toFixed(1)}%`:'추정값');
   const det=poolDetail()[c];
-  if(det){
-    if(det.games>0)w.push(`내 기록 ${det.games}판 ${det.wins}승`+(det.games<5?' · 표본 적음':` (${Math.round(det.wins/det.games*100)}%)`));
-    else if(det.mastery)w.push(`최근 기록 없음 · 숙련도 ${(det.mastery/10000).toFixed(1)}만 점`);
-  }
-  const score=clamp(avg+.6*(x.tfAdv-50)-.35*(x.mc-50)+lanePart+(ctx.pool.has(c)?2:0)+(det&&det.games?Math.min(4,det.games/5):0),0,100);
+  // 내 승률: 50판을 50%로 미리 깔고 계산해서 판수가 적을수록 덜 반영, 5판 미만은 반영 안 함
+  // (10판 80% → +3.0, 50판 60% → +3.0, 100판 60% → +4.0, 50판 40% → -3.0)
+  let myWr=0;
+  if(det&&det.games>0){
+    if(det.games>=5)myWr=((det.wins+25)/(det.games+50)-0.5)*60;
+    const sign=myWr>=0.05?'+':'';
+    w.push(`내 기록 ${det.games}판 ${det.wins}승`+(det.games<5?' · 표본 적음':` (${Math.round(det.wins/det.games*100)}%) · 승률 보정 ${sign}${myWr.toFixed(1)}`));
+  }else if(det&&det.mastery)w.push(`최근 기록 없음 · 숙련도 ${(det.mastery/10000).toFixed(1)}만 점`);
+  const score=clamp(avg+.6*(x.tfAdv-50)-.35*(x.mc-50)+lanePart+(ctx.pool.has(c)?2:0)+(det&&det.games?Math.min(4,det.games/5):0)+myWr,0,100);
   return {c,score,w:w.join(' · '),mine:ctx.pool.has(c),games:det&&det.games,mastery:det&&det.mastery};
 }
 
