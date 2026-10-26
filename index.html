@@ -131,7 +131,7 @@ button:hover{border-color:var(--brass)}
     <p class="warnline" id="badMsg" hidden></p>
     <div class="bar-tools">
       <span style="display:grid;gap:2px"><span class="count" id="count"></span><span class="count" id="dataStatus">데이터: 추정 표 사용 중</span></span>
-      <div class="btns"><button type="button" id="sample">예시 넣기</button><button type="button" id="clear">초기화</button></div>
+      <div class="btns"><button type="button" id="sample">랜덤 예시</button><button type="button" id="clear">초기화</button></div>
     </div>
   </section>
 
@@ -417,7 +417,13 @@ $('fPool').addEventListener('click',()=>{ONLY_POOL=true;applyFilter();render();}
 $('fAll').addEventListener('click',()=>{ONLY_POOL=false;applyFilter();render();});
 applyPos();applyFilter();
 function setAll(a,e,p){LANES.forEach((l,i)=>{$('a'+i).value=a[i]||'';$('e'+i).value=e[i]||'';$('p'+i).value=String(p[i]||0);});render();}
-function sample(){const a=['레넥톤','리신','아리','징크스','쓰레쉬'];a[MY]='';setAll(a,['나서스','카서스','아지르','케이틀린','룰루'],[1,0,0,0,0]);}
+// 포지션별 챔피언 목록에서 겹치지 않게 무작위로 10명 뽑기 (내 자리는 비워서 추천이 보이게)
+function sample(){
+  const used=new Set(),pick=lane=>{const pool=R[LANES[lane]].filter(c=>!used.has(c));const c=pool[Math.floor(Math.random()*pool.length)];used.add(c);return c;};
+  const a=LANES.map((l,i)=>pick(i)),e=LANES.map((l,i)=>pick(i));
+  a[MY]='';
+  setAll(a,e,[0,0,0,0,0]);
+}
 $('sample').addEventListener('click',sample);
 $('clear').addEventListener('click',()=>setAll([],[],[]));
 sample();
