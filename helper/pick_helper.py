@@ -35,7 +35,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 PORT = int(os.environ.get("PICK_HELPER_PORT", "27150"))
 SITE = os.environ.get("PICK_HELPER_SITE", "https://wandadj.github.io/lol-pick-reader/")
 SITE_FILES = ["index.html", "data/stats.json", "data/config.json"]
@@ -236,7 +236,8 @@ def parse_session(sess: dict | None, names: dict[int, str]) -> dict:
 
 
 # ---------------------------------------------------------------- 내 챔프폭 (클라이언트에 로그인한 계정)
-POOL_QUEUES = {400, 420, 440}  # 일반 드래프트, 솔로 랭크, 자유 랭크
+POOL_QUEUES = {400, 420, 430, 440, 480, 490}  # 일반(드래프트·블라인드), 솔로·자유 랭크, 신속 대전, 빠른 대전
+RANKED_QUEUES = {420, 440}
 MATCH_LANE = {"TOP": "TOP", "JUNGLE": "JGL", "MIDDLE": "MID", "MID": "MID"}
 
 
@@ -255,33 +256,48 @@ def parse_pool(summoner: dict, games: list[dict], mastery: list[dict], names: di
     puuid = summoner.get("puuid")
     positions: dict[str, list] = {}
     pos_games: dict[str, int] = {}
-    total = 0
+    unknown: list[dict] = []          # 포지션 정보가 없는 경기 (페이지가 챔피언으로 추정)
+    skipped = {"mode": 0, "short": 0}
+    total = ranked = 0
     seen = set()
+
+    def add(lane, champ, win):
+        row = next((r for r in positions.setdefault(lane, []) if r["name"] == champ), None)
+        if not row:
+            row = {"name": champ, "games": 0, "wins": 0}
+            positions[lane].append(row)
+        row["games"] += 1
+        row["wins"] += 1 if win else 0
+        pos_games[lane] = pos_games.get(lane, 0) + 1
+
     for g in games:
         gid = g.get("gameId")
-        if gid in seen or g.get("queueId") not in POOL_QUEUES or (g.get("gameDuration") or 0) < 15 * 60:
+        if gid in seen:
             continue
         seen.add(gid)
+        if g.get("queueId") not in POOL_QUEUES:
+            skipped["mode"] += 1
+            continue
+        if (g.get("gameDuration") or 0) < 15 * 60:
+            skipped["short"] += 1
+            continue
         parts = g.get("participants") or []
         me = parts[0] if len(parts) == 1 else None
         if me is None:  # 10명 전체가 들어있는 형식이면 내 participantId를 찾음
             pid = next((x.get("participantId") for x in g.get("participantIdentities") or []
                         if (x.get("player") or {}).get("puuid") == puuid), None)
             me = next((x for x in parts if x.get("participantId") == pid), None)
-        if not me:
+        champ = names.get((me or {}).get("championId") or 0)
+        if not champ:
             continue
-        lane = match_lane(me.get("timeline") or {})
-        champ = names.get(me.get("championId") or 0)
-        if not lane or not champ:
-            continue
+        win = bool((me.get("stats") or {}).get("win"))
         total += 1
-        row = next((r for r in positions.setdefault(lane, []) if r["name"] == champ), None)
-        if not row:
-            row = {"name": champ, "games": 0, "wins": 0}
-            positions[lane].append(row)
-        row["games"] += 1
-        row["wins"] += 1 if (me.get("stats") or {}).get("win") else 0
-        pos_games[lane] = pos_games.get(lane, 0) + 1
+        ranked += g.get("queueId") in RANKED_QUEUES
+        lane = match_lane(me.get("timeline") or {})
+        if lane:
+            add(lane, champ, win)
+        else:
+            unknown.append({"name": champ, "win": win})
     for rows in positions.values():
         rows.sort(key=lambda r: (-r["games"], -r["wins"]))
     main = max(pos_games, key=pos_games.get) if pos_games else None
@@ -290,6 +306,10 @@ def parse_pool(summoner: dict, games: list[dict], mastery: list[dict], names: di
         "riotId": f"{summoner.get('gameName', '')}#{summoner.get('tagLine', '')}",
         "mainPosition": main,
         "totalGames": total,
+        "rankedGames": ranked,
+        "checkedGames": len(seen),
+        "skipped": skipped,
+        "unknownLane": unknown,
         "pending": 0,
         "stored": True,
         "source": "client",
@@ -306,19 +326,23 @@ def load_pool(lcu: LCU) -> dict:
     if not summoner.get("puuid"):
         raise NotRunning()
     games: list[dict] = []
-    for beg in range(0, 100, 20):  # 한 번에 20판씩, 최근 100판까지
+    ids = set()
+    beg = 0
+    while beg < 200 and len(ids) < 100:  # 최근 100판까지, 클라이언트가 주는 만큼
         try:
-            data = lcu.get(f"/lol-match-history/v1/products/lol/current-summoner/matches?begIndex={beg}&endIndex={beg + 20}") or {}
+            data = lcu.get(f"/lol-match-history/v1/products/lol/current-summoner/matches?begIndex={beg}&endIndex={beg + 19}") or {}
         except NotRunning:
             raise
         except Exception:
             break
         chunk = ((data.get("games") or {}).get("games")) or []
-        if not chunk:
+        new = [g for g in chunk if g.get("gameId") not in ids]
+        if not new:
             break
-        games += chunk
-        if len(chunk) < 20:
-            break
+        for g in new:
+            ids.add(g.get("gameId"))
+        games += new
+        beg += len(chunk)
     try:
         mastery = lcu.get("/lol-champion-mastery/v1/local-player/champion-mastery") or []
     except NotRunning:

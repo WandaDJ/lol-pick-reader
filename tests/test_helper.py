@@ -92,6 +92,18 @@ class PoolTest(unittest.TestCase):
         self.assertEqual(out["positions"]["SUP"][1], {"name": "파이크", "games": 3, "wins": 0})
         self.assertEqual(out["positionGames"], {"SUP": 10, "MID": 2, "ADC": 1})
         self.assertEqual([m["name"] for m in out["mastery"]], ["쓰레쉬", "레오나"])
+        self.assertEqual(out["skipped"], {"mode": 1, "short": 0})
+        self.assertEqual(out["checkedGames"], 14)  # 중복 1판 제외
+
+    def test_unknown_lane_and_quickplay(self):
+        games = [{"gameId": 1, "queueId": 490, "gameDuration": 1500,
+                  "participants": [{"championId": 412, "stats": {"win": True}, "timeline": {"lane": "NONE", "role": "NONE"}}]},
+                 {"gameId": 2, "queueId": 450, "gameDuration": 1200, "participants": [{"championId": 412}]},
+                 {"gameId": 3, "queueId": 420, "gameDuration": 600, "participants": [{"championId": 412}]}]
+        out = h.parse_pool({"puuid": "me"}, games, [], NAMES)
+        self.assertEqual(out["totalGames"], 1)
+        self.assertEqual(out["unknownLane"], [{"name": "쓰레쉬", "win": True}])
+        self.assertEqual(out["skipped"], {"mode": 1, "short": 1})
 
     def test_match_lane(self):
         self.assertEqual(h.match_lane({"lane": "BOTTOM", "role": "DUO_CARRY"}), "ADC")
