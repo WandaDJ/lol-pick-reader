@@ -659,7 +659,9 @@ let AUTO=true,lastAuto={},liveSig='',POOL_OK=false,POOL_TRY=0;
 function showLive(text,kind){$('live').hidden=false;$('liveText').textContent=text;$('live').dataset.kind=kind;}
 function ensureChamp(name){if(!name)return '';const k=find(name);if(k)return k;D[name]=[3,3,3,3,''];fillNames();return name;}
 function setAuto(id,val){val=val||'';if(lastAuto[id]!==val){$(id).value=val;lastAuto[id]=val;}}
+let SITE0=null;
 function applyHelper(st){
+  if(st.site){if(SITE0===null)SITE0=st.site;else if(st.site!==SITE0){if(!st.inChampSelect){location.reload();return;}showLive('새 버전을 받았어요. 픽창이 끝나면 자동으로 새로고침돼요.','ok');}}
   if(st.client!=='connected'){showLive(st.client==='error'?'클라이언트 응답을 읽지 못했어요. 도우미를 다시 켜보세요.':'롤 클라이언트를 기다리는 중이에요. 클라이언트를 켜면 자동으로 연결돼요.','wait');return;}
   if(!POOL_OK&&Date.now()-POOL_TRY>30000){POOL_TRY=Date.now();fetchPool().then(ok=>{POOL_OK=!!ok;});}
   if(!st.inChampSelect){showLive('클라이언트 연결됨 · 픽창이 시작되면 자동으로 채워요.','ok');if(liveSig){liveSig='';lastAuto={};helperBans=[];render();}return;}

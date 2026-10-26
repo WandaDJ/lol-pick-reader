@@ -8,7 +8,10 @@ http://127.0.0.1:27150/ 에 픽창 판독기 페이지를 띄우고 자동으로
 - 읽는 정보: 내 포지션, 양 팀 챔피언(확정·고민 중), 밴, 지금 누구 차례인지,
   그리고 로그인한 내 계정의 최근 전적·챔피언 숙련도 (챔프폭 계산용)
 - 읽지 않는 정보: 아군·상대의 닉네임, 계정 ID 등 개인 정보 (Riot 정책상 금지)
-- 모든 통신은 내 PC 안(127.0.0.1)에서만 이뤄지고, 외부로는 페이지 최신본을 받아올 때만 접속해요.
+- 모든 통신은 내 PC 안(127.0.0.1)에서만 이뤄지고, 외부로는 GitHub Pages에서
+  페이지와 도우미 최신본을 받아올 때만 접속해요.
+- 자동 업데이트: 켤 때 도우미 코드 최신본을 확인해 새 버전이면 그걸로 실행하고,
+  켜져 있는 동안 10분마다 페이지 최신본을 받아요.
 
 실행: python3 pick_helper.py      (Python 3.9 이상, 외부 패키지 필요 없음)
 종료: 이 창을 닫거나 Ctrl+C
@@ -20,6 +23,7 @@ import json
 import os
 import platform
 import re
+import runpy
 import ssl
 import subprocess
 import sys
@@ -31,7 +35,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 PORT = int(os.environ.get("PICK_HELPER_PORT", "27150"))
 SITE = os.environ.get("PICK_HELPER_SITE", "https://wandadj.github.io/lol-pick-reader/")
 SITE_FILES = ["index.html", "data/stats.json", "data/config.json"]
@@ -350,7 +354,7 @@ def poll_loop(lcu: LCU, interval: float = 1.0):
             st = {"client": "error", "inChampSelect": False, "error": str(e)[:200]}
             msg = f"클라이언트 응답을 읽지 못했어요: {e}"
             wait = 3.0
-        st.update(helper=VERSION, updated=time.time())
+        st.update(helper=VERSION, site=SITE_STAMP, updated=time.time())
         with LOCK:
             STATE.clear()
             STATE.update(st)
@@ -372,6 +376,62 @@ def refresh_site():
             dest.write_bytes(data)
         except Exception:
             pass
+
+
+SITE_STAMP = ""  # 페이지가 바뀌면 달라지는 값 (페이지 자동 새로고침용)
+
+
+def update_stamp():
+    global SITE_STAMP
+    import hashlib
+    data = site_file("index.html") or b""
+    SITE_STAMP = hashlib.sha1(data).hexdigest()[:12]
+
+
+def refresh_loop(every: float = 600):
+    while True:
+        time.sleep(every)
+        refresh_site()
+        update_stamp()
+
+
+def version_tuple(v: str) -> tuple:
+    try:
+        return tuple(int(x) for x in v.split("."))
+    except ValueError:
+        return (0,)
+
+
+def self_update() -> bool:
+    """
+    GitHub Pages에 올라간 도우미 코드가 더 새 버전이면 받아서 그걸로 실행.
+    새 코드 실행에 실패하면 False를 돌려주고 지금 버전으로 계속 실행.
+    """
+    if os.environ.get("PICK_HELPER_NO_UPDATE") or os.environ.get("PICK_HELPER_CHILD"):
+        return False
+    path = cache_dir().parent / "pick_helper.py"
+    try:
+        with urllib.request.urlopen(SITE + "helper/pick_helper.py", context=https_context(), timeout=10) as r:
+            code = r.read().decode("utf-8")
+        if re.search(r'^VERSION = "([\d.]+)"', code, re.M):
+            path.write_text(code, encoding="utf-8")
+    except Exception:
+        pass  # 오프라인이면 예전에 받아둔 최신본이 있는지만 확인
+    if not path.exists():
+        return False
+    m = re.search(r'^VERSION = "([\d.]+)"', path.read_text(encoding="utf-8", errors="ignore"), re.M)
+    if not m or version_tuple(m.group(1)) <= version_tuple(VERSION):
+        return False
+    print(f"새 버전 {m.group(1)}을(를) 받았어요. 새 버전으로 실행합니다. (설치된 버전 {VERSION})")
+    os.environ["PICK_HELPER_CHILD"] = "1"
+    try:
+        runpy.run_path(str(path), run_name="__main__")
+        return True
+    except SystemExit:
+        return True
+    except Exception as e:
+        print(f"새 버전 실행에 실패해서 설치된 버전으로 실행해요: {e}")
+        return False
 
 
 def site_file(name: str) -> bytes | None:
@@ -445,6 +505,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    if self_update():
+        return
     url = f"http://127.0.0.1:{PORT}/"
     print(f"픽창 판독기 PC 도우미 {VERSION}")
     try:
@@ -455,6 +517,8 @@ def main():
         return
     if not os.environ.get("PICK_HELPER_NO_UPDATE"):
         refresh_site()
+        threading.Thread(target=refresh_loop, daemon=True).start()
+    update_stamp()
     global LCU_CLIENT
     LCU_CLIENT = LCU()
     threading.Thread(target=poll_loop, args=(LCU_CLIENT,), daemon=True).start()

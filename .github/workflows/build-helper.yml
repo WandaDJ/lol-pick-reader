@@ -36,7 +36,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install pyinstaller certifi
-          pyinstaller --onefile --name PickHelper --hidden-import certifi --add-data "index.html:site" --add-data "data:site/data" helper/pick_helper.py
+          pyinstaller --onefile --name PickHelper --hidden-import certifi --hidden-import hashlib --hidden-import sqlite3 --hidden-import csv --hidden-import zipfile --hidden-import shutil --hidden-import tempfile --hidden-import logging --hidden-import queue --hidden-import concurrent.futures --hidden-import uuid --hidden-import datetime --add-data "index.html:site" --add-data "data:site/data" helper/pick_helper.py
 
       - name: 압축 (Windows)
         if: runner.os == 'Windows'
