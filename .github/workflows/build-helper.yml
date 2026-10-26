@@ -1,8 +1,11 @@
 name: PC 도우미 빌드
 
+# helper/ 폴더나 페이지가 바뀌어 main에 올라가면 자동으로 빌드하고,
+# helper/pick_helper.py 의 VERSION 으로 Release(helper-v버전)를 만들거나 갱신해요.
 on:
   push:
-    tags: ["helper-v*"]
+    branches: [main]
+    paths: ["helper/**", "index.html", ".github/workflows/build-helper.yml"]
   workflow_dispatch:
 
 permissions:
@@ -50,17 +53,23 @@ jobs:
           path: ${{ matrix.asset }}
 
   release:
-    if: startsWith(github.ref, 'refs/tags/helper-v')
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - name: 버전 읽기
+        id: ver
+        run: echo "version=$(grep -oP '^VERSION = "\K[^"]+' helper/pick_helper.py)" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          name: PC 도우미 ${{ github.ref_name }}
+          tag_name: helper-v${{ steps.ver.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: PC 도우미 ${{ steps.ver.outputs.version }}
+          make_latest: true
           body: |
             픽창 판독기 PC 도우미입니다. 롤 클라이언트의 픽창(포지션, 픽, 밴)을 자동으로 읽어 판독기에 채워줘요.
             - Windows: PickHelper-Windows.zip 압축을 풀고 PickHelper.exe 실행
