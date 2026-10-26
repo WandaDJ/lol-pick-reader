@@ -170,6 +170,7 @@ details.fold[open] .ssum{display:none}
       <label class="label" for="riotId">내 아이디로 챔프폭 불러오기</label>
       <div class="idctl"><input id="riotId" placeholder="이름#태그 (예: Hide on bush#KR1)" autocomplete="off" maxlength="42"><button type="submit" id="idBtn">불러오기</button></div>
       <span class="count" id="idStatus"></span>
+      <span class="count" id="dataLine"></span>
     </form>
     <details class="keybox" id="keyBox" hidden><summary class="note">선택: 중계 서버 없이 이 PC에서 전적 더 보기 (내 Riot API 키 필요)</summary>
     <form class="idrow" id="keyForm">
@@ -299,7 +300,7 @@ const PH=["0~10분","10~20분","20~30분","30분 이후"];
 const $=id=>document.getElementById(id);
 const norm=s=>s.replace(/\s+/g,'').toLowerCase();
 // 페이지를 고칠 때마다 올리는 버전 (날짜.번호)
-const PAGE_VERSION='2026.10.27.7';
+const PAGE_VERSION='2026.10.27.8';
 let HELPER_VER=null;
 function updateVer(){
   const el=document.getElementById('verLine');if(!el)return;
@@ -837,7 +838,8 @@ $('keyForm').addEventListener('submit',ev=>{ev.preventDefault();const k=$('keyIn
 $('keyDel').addEventListener('click',()=>postKey(''));
 let SYNC_TIMER=null;
 
-function applyPool(j){
+function applyPool(j0){
+  const j=JSON.parse(JSON.stringify(j0)); // 원본은 그대로 두고 복사본에 포지션 추정을 더함 (두 번 불러도 같은 결과)
   // 포지션 정보가 없는 경기는 챔피언이 주로 가는 라인으로 넣음
   let guessed=0;
   for(const u of (j.unknownLane||[])){
@@ -874,29 +876,32 @@ function applyPool(j){
   if(j.mainPosition&&!liveSig){MY=LANES.indexOf(j.mainPosition);}
   applyPos();ONLY_POOL=true;applyFilter();render();
   const top=(j.positions&&j.mainPosition&&j.positions[j.mainPosition]||[]).slice(0,3).map(x=>`${x.name} ${x.games}판`).join(', ');
-  const more=j.pending?(j.stored?` · 아직 ${j.pending}판 남음`:' · 서버 누적 저장이 꺼져 있어 최근 35판만 봐요'):'';
-  let kind='최근 랭크',detail='';
-  if(j.source==='api'){
-    kind='Riot 기록 일반·랭크';
-    const sk=j.skipped||{},ex=[];
-    if(sk.mode)ex.push(`칼바람·아레나 등 ${sk.mode}판`);
-    if(sk.short)ex.push(`다시하기·15분 미만 ${sk.short}판`);
-    detail=` · 내 경기 ${j.checkedGames}판 중 ${j.totalGames}판 사용 (랭크 ${j.rankedGames||0}판)${ex.length?' · 제외: '+ex.join(', '):''}`;
-  }
   if(j.sync){
-    detail+=` · ${syncText(j.sync)}`;
     $('keyState').textContent=`API 키 연결됨 · ${syncText(j.sync)}`;
     clearTimeout(SYNC_TIMER);
     if(j.sync.state==='syncing')SYNC_TIMER=setTimeout(fetchPool,15000); // 받는 동안 15초마다 갱신
   }
-  if(j.source==='client'){
-    kind='최근 일반·랭크';
-    const sk=j.skipped||{},ex=[];
-    if(sk.mode)ex.push(`칼바람·아레나 등 ${sk.mode}판`);
-    if(sk.short)ex.push(`다시하기·15분 미만 ${sk.short}판`);
-    detail+=` · 이 PC에 쌓인 전적 ${j.checkedGames||j.totalGames}판 중 ${j.totalGames}판 사용 (랭크 ${j.rankedGames||0}판${guessed?`, 포지션 추정 ${guessed}판`:''})${ex.length?' · 제외: '+ex.join(', '):''}`;
-  }
-  idStatus(lanesFound.length?`${j.riotId} · ${kind} ${j.totalGames}판 기준 · 주 포지션 ${j.mainPosition}${top?' ('+top+')':''}${more}${detail}`:`${j.riotId} · ${kind} 경기가 없어 챔프폭을 채우지 못했어요.${detail}`);
+  // 저장된 전적 현황
+  if(j.source==='client'||j.source==='api')DATA.local=j.checkedGames||j.totalGames||0;
+  else{DATA.server=j.storedGames??null;DATA.pending=j.pending||0;DATA.rateLimited=!!j.rateLimited;DATA.serverErr='';}
+  DATA.used=j.totalGames||0;
+  renderData();
+  idStatus(lanesFound.length?`${j.riotId} · 주 포지션 ${j.mainPosition}${top?` (${top})`:''}`:`${j.riotId} · 분석할 경기가 아직 없어요.`);
+}
+// ---- 저장된 전적 현황 (한 줄)
+const DATA={local:null,server:null,pending:0,rateLimited:false,serverErr:'',used:0};
+function renderData(){
+  const parts=[];
+  if(DATA.server!==null){
+    let st=`서버 ${DATA.server}판`;
+    if(DATA.rateLimited)st+=' (요청이 많아 1분 뒤 이어서 받아요)';
+    else if(DATA.pending>0)st+=` (${DATA.pending}판 남음, 페이지를 열어두면 1분마다 이어서 받아요)`;
+    else st+=' (최신)';
+    parts.push(st);
+  }else if(DATA.serverErr)parts.push(`서버: ${DATA.serverErr}`);
+  if(DATA.local!==null)parts.push(`이 PC ${DATA.local}판`);
+  if(DATA.used)parts.push(`분석에 쓴 경기 ${DATA.used}판 (칼바람·아레나·다시하기 제외)`);
+  $('dataLine').textContent=parts.length?'저장된 전적 · '+parts.join(' · '):'';
 }
 async function fetchPool(opts={}){
   let url;
@@ -915,31 +920,34 @@ async function fetchPool(opts={}){
     const j=await r.json().catch(()=>({}));
     if(!r.ok)throw new Error(j.error||`불러오지 못했어요 (${r.status})`);
     // 도우미가 읽은 클라이언트 기록을 중계 서버에도 쌓아둠 (Riot API는 쓰지 않음)
-    let upNote='';
     if(LOCAL&&POOL_API&&j.riotId&&(j.records||[]).length){
-      try{
-        const ur=await fetch(`${POOL_API}/ingest`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({riotId:j.riotId,games:j.records})});
-        const uj=await ur.json().catch(()=>({}));
-        upNote=ur.ok?(uj.added?` · 서버에 새 기록 ${uj.added}판 저장`:''):` · 서버 저장 안 됨: ${uj.error||ur.status}`;
-      }catch(e){upNote=' · 서버에 연결하지 못해 이 PC에만 저장했어요';}
-    }
-    if(LOCAL&&POOL_API&&opts.server&&j.riotId&&j.source!=='api'){
-      // 클라이언트에 로그인한 아이디로 중계 서버의 최근 300판 기록을 받아옴
-      try{
-        idStatus(`${j.riotId} · 중계 서버에서 최근 300판 기록을 받는 중이에요.`);
-        const wr=await fetch(`${POOL_API}/pool?riotId=${encodeURIComponent(j.riotId)}`);
-        const w=await wr.json().catch(()=>({}));
-        if(wr.ok&&(w.totalGames||0)>=(j.totalGames||0)){applyPool(w);if(upNote)idStatus($('idStatus').textContent+upNote);keepGoing(w);return true;}
-        if(!wr.ok){applyPool(j);idStatus($('idStatus').textContent+` · 중계 서버: ${w.error||wr.status}`);return true;}
-      }catch(e){}
+      try{await fetch(`${POOL_API}/ingest`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({riotId:j.riotId,games:j.records})});}catch(e){}
     }
     applyPool(j);
-    if(upNote)idStatus($('idStatus').textContent+upNote);
+    if(LOCAL&&POOL_API&&opts.server&&j.riotId&&j.source!=='api'){
+      // 클라이언트에 로그인한 아이디로 중계 서버의 최근 300판 기록을 받아옴
+      idStatus(`${j.riotId} · 서버에서 전적을 받는 중이에요.`);
+      try{
+        const wr=await fetch(`${POOL_API}/pool?riotId=${encodeURIComponent(j.riotId)}`);
+        const w=await wr.json().catch(()=>({}));
+        if(wr.ok){
+          if((w.totalGames||0)>=(j.totalGames||0))applyPool(w);
+          else{DATA.server=w.storedGames??null;DATA.pending=w.pending||0;DATA.rateLimited=!!w.rateLimited;applyPool(j);}
+          keepGoing(w);
+        }else{
+          applyPool(j);DATA.server=null;
+          DATA.serverErr=wr.status===429?'요청이 많아 1분 뒤 다시 시도해요':(w.error||`오류 ${wr.status}`);renderData();
+          if(wr.status===429)CONT_TIMER=setTimeout(()=>fetchPool({server:true}),60000);
+        }
+      }catch(e){applyPool(j);DATA.serverErr='서버에 연결하지 못했어요';renderData();}
+      return true;
+    }
     if(!LOCAL)keepGoing(j);
     return true;
   }catch(e){
-    idStatus(e.message||'불러오지 못했어요.',true);
-    if(opts.server&&/요청이 많아요/.test(e.message||''))CONT_TIMER=setTimeout(()=>fetchPool({server:true}),60000);
+    const busy=/요청이 많아요/.test(e.message||'');
+    idStatus(busy?'서버가 바빠요. 1분 뒤 다시 시도해요.':(e.message||'불러오지 못했어요.'),!busy);
+    if(opts.server&&busy)CONT_TIMER=setTimeout(()=>fetchPool({server:true}),60000);
     return false;
   }
   finally{$('idBtn').disabled=LOCAL?false:!POOL_API;}
@@ -948,10 +956,7 @@ async function fetchPool(opts={}){
 let CONT_TIMER=null;
 function keepGoing(j){
   clearTimeout(CONT_TIMER);
-  if(j&&j.pending>0&&j.stored){
-    idStatus($('idStatus').textContent+' · 이 페이지를 열어두면 1분마다 이어서 받아요');
-    CONT_TIMER=setTimeout(()=>fetchPool({server:true}),60000);
-  }
+  if(j&&j.stored&&(j.pending>0||j.rateLimited))CONT_TIMER=setTimeout(()=>fetchPool({server:true}),60000);
 }
 $('idForm').addEventListener('submit',ev=>{ev.preventDefault();fetchPool({server:true});});
 loadConfig();

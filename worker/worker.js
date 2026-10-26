@@ -36,7 +36,9 @@ const KEEP_MATCHES = 300;       // 아이디별로 보관하는 최근 경기 �
 const NEW_PER_LOAD = 35;        // 한 번 불러올 때 새로 받는 경기 수 (무료 플랜 외부 호출 50회 한도 안)
 // 포지션이 있는 큐만: 솔로·자유 랭크, 빠른 대전, 일반 드래프트, 신속 대전
 const ID_QUERIES = ["type=ranked", "queue=490", "queue=400", "queue=480"];
-const BATCH = 10;               // 동시에 받는 경기 수
+const BATCH = 4;                // 동시에 받는 경기 수 (1초 20회 한도를 넘지 않게)
+const BATCH_GAP_MS = 350;       // 묶음 사이 쉬는 시간
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const MASTERY_COUNT = 40;
 const CACHE_SECONDS = 10 * 60;  // 같은 아이디 응답 캐시
 const POS = { TOP: "TOP", JUNGLE: "JGL", MIDDLE: "MID", BOTTOM: "ADC", UTILITY: "SUP" };
@@ -158,21 +160,37 @@ export async function syncUser(env, puuid, budget, names) {
   const kvKey = `pool:${puuid}`;
   const stored = (env.POOL_KV && (await env.POOL_KV.get(kvKey, "json"))) || { matches: {} };
   const known = stored.matches;
-  const ids = await matchIdList(env, puuid, Object.keys(known).length < KEEP_MATCHES - 50);
+  let rateLimited = false;
+  let ids;
+  try {
+    ids = await matchIdList(env, puuid, Object.keys(known).length < KEEP_MATCHES - 50);
+  } catch (e) {
+    if (e.status !== 429) throw e;
+    // 한도에 걸리면 저장된 기록으로 답하고 다음에 이어서 받음
+    return { known, pending: stored.pending || 0, rateLimited: true };
+  }
   const todo = ids.filter((m) => !(m in known)).slice(0, budget);
+  let fetched = 0;
   for (let i = 0; i < todo.length; i += BATCH) {
+    if (i) await sleep(BATCH_GAP_MS);
     const chunk = todo.slice(i, i + BATCH);
-    const got = await Promise.all(chunk.map((m) => riot(env, REGION, `/lol/match/v5/matches/${m}`)));
-    chunk.forEach((m, j) => { if (got[j]) known[m] = myRecord(got[j], puuid, names); });
+    const got = await Promise.allSettled(chunk.map((m) => riot(env, REGION, `/lol/match/v5/matches/${m}`)));
+    chunk.forEach((m, j) => {
+      const r = got[j];
+      if (r.status === "fulfilled") { if (r.value) { known[m] = myRecord(r.value, puuid, names); fetched += 1; } }
+      else if (r.reason && r.reason.status === 429) rateLimited = true;
+      else throw r.reason;
+    });
+    if (rateLimited) break;  // 받은 만큼은 아래에서 저장
   }
   // 최신 300판만 남김
   const keep = new Set([...new Set([...Object.keys(known), ...ids])].sort((a, b) => matchNum(b) - matchNum(a)).slice(0, KEEP_MATCHES));
   for (const m of Object.keys(known)) if (!keep.has(m)) delete known[m];
   const pending = ids.filter((m) => !(m in known)).length;
-  if (env.POOL_KV && (todo.length || stored.pending !== pending)) {
+  if (env.POOL_KV && (fetched || stored.pending !== pending)) {
     await env.POOL_KV.put(kvKey, JSON.stringify({ matches: known, pending, updated: Date.now() }));
   }
-  return { known, pending };
+  return { known, pending, rateLimited };
 }
 
 const POOL_QUEUE_IDS = new Set([400, 420, 430, 440, 480, 490]);
@@ -218,10 +236,13 @@ export async function buildPool(env, riotId) {
   const puuid = account.puuid;
   const names = await championNames(env);
   const [mastery, synced] = await Promise.all([
-    riot(env, PLATFORM, `/lol/champion-mastery/v4/champion-masteries/by-puuid/${puuid}/top?count=${MASTERY_COUNT}`),
+    riot(env, PLATFORM, `/lol/champion-mastery/v4/champion-masteries/by-puuid/${puuid}/top?count=${MASTERY_COUNT}`).catch((e) => {
+      if (e.status === 429) return [];
+      throw e;
+    }),
     syncUser(env, puuid, NEW_PER_LOAD, names),
   ]);
-  const { known, pending } = synced;
+  const { known, pending, rateLimited } = synced;
 
   const positions = {};
   const posGames = {};
@@ -246,6 +267,8 @@ export async function buildPool(env, riotId) {
     mainPosition,
     totalGames: total + unknownLane.length,
     skippedGames: skipped,
+    storedGames: Object.keys(known).length,   // 서버에 저장된 전체 경기 수 (칼바람 등 포함)
+    rateLimited: !!rateLimited,               // 요청 한도에 걸려서 이번엔 덜 받음 → 1분 뒤 이어서
     unknownLane,
     pending,
     stored: !!env.POOL_KV,
@@ -291,7 +314,7 @@ export default {
     try {
       const body = await buildPool(env, riotId);
       // 아직 받을 경기가 남았으면 다음 요청에서 이어 받도록 캐시하지 않음
-      if (cache && body.pending === 0) {
+      if (cache && body.pending === 0 && !body.rateLimited) {
         const stored = new Response(JSON.stringify(body), { headers: { "Cache-Control": `max-age=${CACHE_SECONDS}` } });
         ctx.waitUntil(cache.put(cacheKey, stored));
       }

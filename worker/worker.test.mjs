@@ -92,6 +92,24 @@ assert.equal(denied.status, 403);
 assert.match((await denied.json()).error, /등록된 아이디만/);
 assert.equal(calls, 0, "허용 안 된 아이디는 Riot API를 호출하지 않아야 함");
 
+// 3-1) 받는 도중 한도(429)에 걸려도 받은 만큼 저장하고 이어 받기
+{
+  const envRL = { ...envNoKV, POOL_KV: new FakeKV() };
+  let n = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes("/matches/KR_") && ++n === 10) return new Response("{}", { status: 429, headers: { "Retry-After": "5" } });
+    return realFetch(url, init);
+  };
+  const b1 = await (await call(envRL, "동재#KR1")).json();
+  assert.equal(b1.rateLimited, true);
+  assert.ok(b1.storedGames >= 8 && b1.storedGames < 35, `한도 전까지 받은 ${b1.storedGames}판 저장`);
+  globalThis.fetch = realFetch;
+  const b2 = await (await call(envRL, "동재#KR1")).json();
+  assert.equal(b2.rateLimited, false);
+  assert.ok(b2.storedGames > b1.storedGames, "다음 요청에서 이어 받음");
+}
+
 // 4) 도우미가 보낸 클라이언트 기록 합치기
 const envIn = { ...envLimited, ALLOWED_RIOT_IDS: "동재#KR1", POOL_KV: new FakeKV() };
 const post = (env, body, origin = "http://127.0.0.1:27150") => worker.fetch(new Request("https://w.example/ingest",
