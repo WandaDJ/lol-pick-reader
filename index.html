@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>픽창 판독기</title>
+<meta name="description" content="리그 오브 레전드 픽창에서 양 팀 조합의 시간대별 우세, 한타, 운영 난이도를 보고 챔피언을 추천받는 도구">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=IBM+Plex+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+html{color-scheme:light}body{margin:0}[hidden]{display:none!important}img{max-width:100%}
+/* Layout: 상단 10인 입력(아군|상대) → 시간대별 우세 타임라인 → 한타·운영 카드 2개 → 서포터 추천. 모바일은 한 줄로 쌓임 */
+:root{
+  --bg:#eef1f3; --panel:#ffffff; --line:#d4dbe0; --fg:#14212b; --muted:#5d6c78;
+  --brass:#9a6a12; --brass-soft:#f3e6c8; --ally:#2c6aa0; --enemy:#b8452f; --ok:#2f7d55; --warn:#b07a12;
+  --display:"Black Han Sans","IBM Plex Sans KR",system-ui,sans-serif;
+  --body:"IBM Plex Sans KR","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f171d; --panel:#16222b; --line:#273642; --fg:#e4ebef; --muted:#93a3ae;
+  --brass:#d9a547; --brass-soft:#3a2f18; --ally:#6aa6dc; --enemy:#e07a5f; --ok:#5fbf8a; --warn:#e0b04f; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f171d; --panel:#16222b; --line:#273642; --fg:#e4ebef; --muted:#93a3ae;
+  --brass:#d9a547; --brass-soft:#3a2f18; --ally:#6aa6dc; --enemy:#e07a5f; --ok:#5fbf8a; --warn:#e0b04f; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;line-height:1.55}
+.wrap{max-width:1080px;margin:0 auto;padding-block:28px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:20px}
+header h1{font-family:var(--display);font-weight:400;font-size:clamp(28px,5vw,40px);margin:0;text-wrap:balance}
+header p{margin:4px 0 0;color:var(--muted);max-width:66ch}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:20px;display:grid;gap:16px;min-width:0}
+.label{font-size:12px;font-weight:700;letter-spacing:.08em;color:var(--muted)}
+.teams{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}
+@media (max-width:760px){.teams{grid-template-columns:1fr}}
+.team{display:grid;gap:8px;min-width:0}
+.team-head{display:flex;align-items:center;gap:8px;font-weight:700}
+.dot{width:9px;height:9px;border-radius:50%}
+.row{display:grid;grid-template-columns:40px minmax(0,1fr) 112px;gap:8px;align-items:center}
+.row.e{grid-template-columns:40px minmax(0,1fr)}
+.lane{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--muted)}
+.lane.me{color:var(--brass)}
+input,select{font:inherit;font-size:14px;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:7px 9px;width:100%;box-sizing:border-box;min-width:0}
+input.bad{border-color:var(--enemy)}
+input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--brass);outline-offset:1px}
+.me-tag{font-size:11px;color:var(--brass);text-align:center}
+.bar-tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between}
+.btns{display:flex;gap:8px;flex-wrap:wrap}
+button{font:inherit;font-size:13px;border:1px solid var(--line);background:transparent;color:var(--fg);border-radius:6px;padding:7px 12px;cursor:pointer}
+button:hover{border-color:var(--brass)}
+.count{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.warnline{font-size:13px;color:var(--enemy);margin:0}
+/* timeline */
+.phases{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+@media (max-width:760px){.phases{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.ph{border:1px solid var(--line);border-radius:8px;padding:12px;display:grid;gap:8px;min-width:0}
+.ph .t{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.ph .pct{font-family:var(--mono);font-size:24px;font-weight:600;font-variant-numeric:tabular-nums}
+.ph .st{font-size:13px;font-weight:700}
+.dv{position:relative;height:8px;background:var(--line);border-radius:4px;overflow:hidden}
+.dv::after{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--muted)}
+.dv i{position:absolute;top:0;bottom:0;transition:all .35s ease}
+.ph.peak{border-color:var(--brass);box-shadow:inset 0 0 0 1px var(--brass)}
+.ph.peak .t::after{content:" · 최강 구간";color:var(--brass)}
+.chart{overflow-x:auto}
+.chart svg{display:block;width:100%;min-width:300px;height:auto}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px}
+@media (max-width:760px){.two{grid-template-columns:1fr}}
+.big{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.big b{font-family:var(--display);font-weight:400;font-size:30px}
+.pill{font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;border:1px solid currentColor}
+.list{margin:0;padding-left:18px;display:grid;gap:4px;font-size:14px}
+.vs{display:grid;grid-template-columns:52px minmax(0,1fr) 40px;gap:8px;align-items:center;font-size:13px}
+.vs .bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden}
+.vs .bar i{display:block;height:100%;border-radius:4px}
+.vs .v{font-family:var(--mono);text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+.ranks{display:grid;gap:8px}
+.rank{display:grid;grid-template-columns:22px 108px minmax(0,1fr) 40px;gap:10px;align-items:center;font-size:14px}
+.rank .n{font-family:var(--mono);color:var(--muted);font-size:12px}
+.rank .bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden}
+.rank .bar i{display:block;height:100%;background:var(--muted);border-radius:4px;transition:width .35s ease}
+.rank:first-of-type .bar i{background:var(--brass)}
+.rank:first-of-type .name{font-weight:700}
+.rank .v{font-family:var(--mono);font-size:12px;text-align:right;color:var(--muted)}
+.rank .why{grid-column:2/-1;font-size:12px;color:var(--muted);margin-top:-6px}
+.note{font-size:12px;color:var(--muted);margin:0}
+.pos{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;flex-wrap:wrap}
+.seg button{border:0;border-radius:0;padding:7px 14px;font-family:var(--mono);font-weight:600}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"],.seg button[aria-checked="true"]{background:var(--brass-soft);color:var(--brass)}
+.me-tag[hidden]{display:none}
+.row .hide{visibility:hidden}
+.poolbox{display:grid;gap:4px}
+.badge{font-size:11px;font-weight:700;color:var(--brass);border:1px solid var(--brass);border-radius:999px;padding:0 7px;margin-left:6px;white-space:nowrap}
+.rank .name{display:flex;align-items:center;min-width:0}
+.rank{grid-template-columns:22px 150px minmax(0,1fr) 40px}
+@media (max-width:480px){.rank{grid-template-columns:20px 118px minmax(0,1fr) 34px}}
+.empty{font-size:14px;color:var(--muted);margin:0}
+@media (prefers-reduced-motion:reduce){.dv i,.rank .bar i{transition:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>픽창 판독기</h1>
+    <p>양 팀 10명을 넣으면 0~10분, 10~20분, 20~30분, 30분 이후 구간별 우세와 5:5 한타 구도, 운영 난이도를 보여줘요. 내 포지션을 고르고 그 칸을 비워두면 지금 픽창 상황에 맞는 챔피언을 추천해요.</p>
+  </header>
+
+  <section class="panel" aria-label="챔피언 입력">
+    <div class="pos">
+      <span class="label">내 포지션</span>
+      <div class="seg" id="posSeg" role="radiogroup" aria-label="내 포지션"></div>
+    </div>
+    <div class="teams">
+      <div class="team" id="allyBox">
+        <div class="team-head"><span class="dot" style="background:var(--ally)"></span>아군</div>
+      </div>
+      <div class="team" id="enemyBox">
+        <div class="team-head"><span class="dot" style="background:var(--enemy)"></span>상대 <span class="note" style="font-weight:400">(보이는 만큼만)</span></div>
+      </div>
+    </div>
+    <p class="warnline" id="badMsg" hidden></p>
+    <div class="bar-tools">
+      <span style="display:grid;gap:2px"><span class="count" id="count"></span><span class="count" id="dataStatus">데이터: 추정 표 사용 중</span></span>
+      <div class="btns"><button type="button" id="sample">예시 넣기</button><button type="button" id="clear">초기화</button></div>
+    </div>
+  </section>
+
+  <section class="panel" aria-live="polite" aria-label="시간대별 우세">
+    <span class="label">시간대별 우세 (아군 기준)</span>
+    <div class="phases" id="phases"></div>
+    <div class="chart" id="chart"></div>
+  </section>
+
+  <div class="two">
+    <section class="panel" aria-label="5:5 한타">
+      <span class="label">5:5 한타</span>
+      <div class="big" id="tfBig"></div>
+      <div id="tfVs" style="display:grid;gap:8px"></div>
+      <ul class="list" id="tfWhy"></ul>
+    </section>
+    <section class="panel" aria-label="운영 난이도">
+      <span class="label">운영 난이도 (아군)</span>
+      <div class="big" id="mcBig"></div>
+      <ul class="list" id="mcWhy"></ul>
+    </section>
+  </div>
+
+  <section class="panel" aria-label="게임 플랜">
+    <span class="label">이번 판 게임 플랜</span>
+    <ul class="list" id="plan"></ul>
+  </section>
+
+  <section class="panel" aria-label="추천 챔피언">
+    <div class="bar-tools">
+      <span class="label" id="rkTitle">추천 챔피언</span>
+      <div class="seg" role="radiogroup" aria-label="추천 범위">
+        <button type="button" id="fPool" aria-pressed="false">내 챔프폭만</button>
+        <button type="button" id="fAll" aria-pressed="true">전체</button>
+      </div>
+    </div>
+    <label class="poolbox"><span class="note" id="poolLbl">내 챔프폭</span><input id="pool" placeholder="쉼표로 구분, 예: 쓰레쉬, 노틸러스" autocomplete="off"></label>
+    <div class="ranks" id="ranks"></div>
+    <p class="note">내 자리에 각 챔피언을 넣어보고 구간별 우세, 한타, 운영 난이도, 상대 라이너와의 라인전을 합쳐 순위를 매겨요. 이미 픽된 챔피언은 빠지고, 챔프폭은 이 브라우저에 저장돼요.</p>
+  </section>
+
+  <p class="note" id="srcNote"><b>데이터 출처 안내:</b> 모든 수치는 실제 경기 통계가 아니라, 챔피언별 초반·중반·후반 강도와 한타 성향을 1~5점으로 직접 매긴 추정 표로 계산해요. 패치 변화도 반영되지 않아요. 방향을 잡는 참고용으로 쓰시고, 상성이 애매할 땐 op.gg 같은 통계 사이트에서 한 번 더 확인하세요.</p>
+  <footer class="note" style="display:grid;gap:4px">
+    <span><a href="https://github.com/WandaDJ/lol-pick-reader" style="color:inherit">GitHub 저장소</a> · 통계 수집 방법과 갱신 주기는 README에 있어요.</span>
+    <span>픽창 판독기는 Riot Games의 승인이나 보증을 받지 않았으며, Riot Games 또는 리그 오브 레전드 제작·관리에 공식적으로 관여한 사람의 견해를 대변하지 않습니다. League of Legends 및 Riot Games는 Riot Games, Inc.의 상표 또는 등록 상표입니다.</span>
+  </footer>
+</div>
+
+<datalist id="champs"></datalist>
+
+<script>
+// [초반(0-10), 중반(10-20), 후반(30+), 한타, 태그] 태그: E 이니시, F 앞라인, P 보호, S 스플릿, M 마법피해, A 물리피해
+const D={
+"레넥톤":[5,3,2,3,"FA"],"다리우스":[5,4,2,3,"FA"],"판테온":[5,3,1,3,"EA"],"클레드":[5,4,2,3,"EA"],"올라프":[4,4,2,2,"A"],"세트":[4,4,3,4,"EFA"],"나르":[4,4,3,4,"EFA"],"제이스":[4,4,2,2,"A"],"리븐":[4,4,3,3,"A"],"이렐리아":[4,4,3,3,"A"],"아트록스":[4,4,3,4,"FA"],"볼리베어":[4,4,2,3,"EFM"],"우르곳":[4,4,3,3,"FA"],"퀸":[4,3,2,1,"SA"],"트런들":[4,4,3,3,"SFA"],"암베사":[4,4,3,3,"EA"],"카밀":[3,4,4,3,"SEA"],"피오라":[3,4,4,2,"SA"],"가렌":[3,3,3,3,"FA"],"요릭":[3,4,4,2,"SA"],"쉔":[3,3,3,4,"EFPM"],"티모":[3,3,3,2,"M"],"모데카이저":[3,4,4,3,"FM"],"그라가스":[3,3,3,4,"EFM"],"케넨":[3,4,3,5,"EM"],"럼블":[3,4,3,4,"M"],"야스오":[3,3,4,4,"A"],"요네":[3,4,4,4,"EA"],"탐 켄치":[3,3,3,3,"FPM"],"아칼리":[3,4,3,3,"M"],"그웬":[2,4,4,3,"SM"],"잭스":[2,4,5,3,"SA"],"사이온":[2,3,4,4,"EFA"],"말파이트":[2,3,4,5,"EFM"],"초가스":[2,3,4,3,"FM"],"갱플랭크":[2,4,5,4,"A"],"블라디미르":[1,3,5,4,"M"],"오른":[1,3,5,4,"EFM"],"나서스":[1,3,5,3,"SFA"],"케일":[1,2,5,4,"M"],"문도 박사":[2,3,4,3,"FM"],"마오카이":[3,3,3,4,"EFPM"],
+"리신":[5,4,2,3,"EA"],"엘리스":[5,3,1,2,"M"],"신짜오":[5,4,2,3,"EA"],"렉사이":[5,4,2,3,"EA"],"자르반 4세":[4,4,3,4,"EFA"],"바이":[4,4,3,4,"EA"],"니달리":[4,4,2,2,"M"],"렝가":[4,4,3,2,"A"],"워윅":[4,4,2,3,"FA"],"브라이어":[4,4,2,2,"A"],"스카너":[4,4,3,4,"EFA"],"탈리야":[4,4,3,3,"M"],"녹턴":[3,4,3,3,"EA"],"그레이브즈":[3,4,4,3,"A"],"킨드레드":[3,4,4,3,"A"],"카직스":[3,4,3,2,"A"],"에코":[3,4,3,3,"M"],"비에고":[3,4,4,3,"A"],"세주아니":[3,3,3,5,"EFM"],"헤카림":[3,4,3,4,"EA"],"다이애나":[3,4,3,4,"EM"],"우디르":[3,3,3,3,"FM"],"누누와 윌럼프":[3,3,3,4,"EFM"],"마스터 이":[2,4,5,3,"A"],"벨베스":[2,4,5,3,"A"],"쉬바나":[2,3,4,4,"FM"],"릴리아":[2,4,4,4,"M"],"아무무":[2,4,4,5,"EFM"],"자크":[2,4,4,5,"EFM"],"람머스":[2,3,4,3,"FM"],"피들스틱":[2,4,4,5,"EM"],"카서스":[1,3,5,4,"M"],
+"르블랑":[5,4,2,2,"M"],"탈론":[5,4,2,2,"A"],"사일러스":[4,4,3,4,"EM"],"제드":[4,4,3,2,"A"],"애니":[4,4,3,4,"EM"],"카타리나":[3,4,3,4,"M"],"트위스티드 페이트":[3,4,3,3,"M"],"신드라":[3,4,4,4,"M"],"아리":[3,4,3,3,"M"],"피즈":[3,4,3,3,"M"],"럭스":[3,3,3,3,"PM"],"제라스":[3,3,4,3,"M"],"갈리오":[3,4,3,5,"EFM"],"흐웨이":[3,4,4,4,"M"],"말자하":[3,3,4,3,"M"],"벡스":[3,4,3,4,"M"],"오리아나":[2,4,4,5,"M"],"아지르":[2,3,5,4,"M"],"빅토르":[2,4,5,4,"M"],"코르키":[2,4,4,3,"M"],"카사딘":[1,3,5,3,"M"],"베이가":[1,3,5,4,"M"],"아우렐리온 솔":[1,3,5,4,"M"],"스몰더":[1,3,5,4,"A"],"트리스타나":[3,4,4,3,"A"],
+"드레이븐":[5,4,3,3,"A"],"루시안":[5,4,2,3,"A"],"칼리스타":[5,4,2,3,"A"],"미스 포츈":[4,4,3,4,"A"],"케이틀린":[4,4,3,3,"A"],"애쉬":[3,4,4,4,"A"],"이즈리얼":[3,4,4,3,"A"],"진":[3,4,4,3,"A"],"바루스":[3,4,4,4,"A"],"자야":[3,4,4,4,"A"],"닐라":[3,4,4,3,"A"],"시비르":[2,4,4,4,"A"],"카이사":[2,4,5,4,"A"],"징크스":[2,3,5,4,"A"],"제리":[2,4,5,4,"A"],"아펠리오스":[2,4,5,4,"A"],"트위치":[2,4,5,4,"A"],"코그모":[1,3,5,4,"A"],"유나라":[2,4,5,4,"A"],
+"파이크":[5,4,2,2,"EA"],"쓰레쉬":[4,4,3,4,"EPM"],"블리츠크랭크":[4,4,2,3,"EM"],"레오나":[5,4,3,4,"EFM"],"노틸러스":[4,4,3,4,"EFM"],"알리스타":[4,4,3,4,"EFPM"],"렐":[4,4,3,5,"EFM"],"라칸":[3,4,4,4,"EPM"],"브라움":[3,3,3,4,"FPM"],"소라카":[2,3,4,3,"PM"],"레나타 글라스크":[3,3,4,4,"PM"],"룰루":[3,3,4,4,"PM"],"유미":[1,3,4,3,"PM"],"잔나":[3,3,4,4,"PM"],"나미":[4,4,3,3,"PM"],"밀리오":[2,3,4,4,"PM"],"모르가나":[3,3,3,3,"PM"],"세나":[2,4,5,3,"PA"],"카르마":[4,3,3,3,"PM"],"브랜드":[4,4,3,4,"M"],"자이라":[4,4,3,3,"M"],"소나":[2,3,4,4,"PM"],"타릭":[2,3,4,4,"FPM"]
+};
+const ALIAS={"자르반":"자르반 4세","누누":"누누와 윌럼프","트페":"트위스티드 페이트","tf":"트위스티드 페이트","레나타":"레나타 글라스크","미포":"미스 포츈","아솔":"아우렐리온 솔","문도":"문도 박사","탐켄치":"탐 켄치","탐":"탐 켄치","마이":"마스터 이","블리츠":"블리츠크랭크","쓰레시":"쓰레쉬","트타":"트리스타나","코그":"코그모","알리":"알리스타","노틸":"노틸러스"};
+const LANES=["TOP","JGL","MID","ADC","SUP"];
+// 포지션별 챔피언 (여러 포지션 가능)
+const R={
+TOP:"레넥톤,다리우스,판테온,클레드,올라프,세트,나르,제이스,리븐,이렐리아,아트록스,볼리베어,우르곳,퀸,트런들,암베사,카밀,피오라,가렌,요릭,쉔,티모,모데카이저,그라가스,케넨,럼블,야스오,요네,탐 켄치,아칼리,그웬,잭스,사이온,말파이트,초가스,갱플랭크,블라디미르,오른,나서스,케일,문도 박사,마오카이,워윅",
+JGL:"리신,엘리스,신짜오,렉사이,자르반 4세,바이,니달리,렝가,워윅,브라이어,스카너,탈리야,올라프,트런들,녹턴,그레이브즈,킨드레드,카직스,에코,비에고,세주아니,헤카림,다이애나,우디르,누누와 윌럼프,마스터 이,벨베스,쉬바나,릴리아,아무무,자크,람머스,피들스틱,카서스,그라가스,볼리베어,마오카이,그웬,사일러스",
+MID:"르블랑,탈론,사일러스,제드,애니,카타리나,트위스티드 페이트,신드라,아리,피즈,럭스,제라스,갈리오,흐웨이,말자하,벡스,오리아나,아지르,빅토르,코르키,카사딘,베이가,아우렐리온 솔,스몰더,트리스타나,야스오,요네,아칼리,판테온,럼블,블라디미르,다이애나,에코,탈리야,제이스,브랜드",
+ADC:"드레이븐,루시안,칼리스타,미스 포츈,케이틀린,애쉬,이즈리얼,진,바루스,자야,닐라,시비르,카이사,징크스,제리,아펠리오스,트위치,코그모,유나라,스몰더,트리스타나,세나",
+SUP:"파이크,쓰레쉬,블리츠크랭크,레오나,노틸러스,알리스타,렐,라칸,브라움,소라카,레나타 글라스크,룰루,유미,잔나,나미,밀리오,모르가나,세나,카르마,브랜드,자이라,소나,타릭,마오카이,쉔,판테온,럭스,제라스,갈리오,세트,탐 켄치,말파이트"
+};
+Object.keys(R).forEach(k=>R[k]=R[k].split(',').filter(n=>D[n]));
+const DEFAULT_POOL={SUP:"파이크, 쓰레쉬, 블리츠크랭크, 소라카, 레나타 글라스크, 노틸러스, 알리스타, 마오카이, 룰루, 유미, 쉔"};
+const store={get(k){try{return localStorage.getItem(k)}catch(e){return null}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+let MY=LANES.indexOf(store.get('pr.pos')||'SUP');if(MY<0)MY=4;
+let ONLY_POOL=store.get('pr.only')==='1';
+const PH=["0~10분","10~20분","20~30분","30분 이후"];
+const $=id=>document.getElementById(id);
+const norm=s=>s.replace(/\s+/g,'').toLowerCase();
+let NAMES=Object.keys(D);
+let STATS=null,META=null;
+function fillNames(){NAMES=Object.keys(D);$('champs').innerHTML=NAMES.slice().sort((a,b)=>a.localeCompare(b,'ko')).map(k=>`<option value="${k}">`).join('');}
+fillNames();
+const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+
+// 입력 행 생성
+LANES.forEach((l,i)=>{
+  $('allyBox').insertAdjacentHTML('beforeend',
+    `<div class="row"><span class="lane" id="l${i}">${l}</span><input id="a${i}" list="champs" placeholder="챔피언" autocomplete="off">`+
+    `<span class="me-tag" id="m${i}" hidden>내 자리</span><select id="p${i}" aria-label="아군 ${l} 숙련도"><option value="1">장인</option><option value="0" selected>보통</option><option value="-1">첫판·연패</option></select></div>`);
+  $('enemyBox').insertAdjacentHTML('beforeend',
+    `<div class="row e"><span class="lane">${l}</span><input id="e${i}" list="champs" placeholder="챔피언" autocomplete="off"></div>`);
+  $('posSeg').insertAdjacentHTML('beforeend',`<button type="button" role="radio" data-i="${i}">${l}</button>`);
+});
+function poolKey(){return 'pr.pool.'+LANES[MY]}
+function poolList(){return $('pool').value.split(/[,，]/).map(s=>find(s)).filter(Boolean)}
+function applyPos(){
+  LANES.forEach((l,i)=>{
+    const me=i===MY;
+    $('l'+i).classList.toggle('me',me);
+    $('m'+i).hidden=!me;
+    $('p'+i).hidden=me;
+    $('a'+i).placeholder=me?'비워두면 추천':'챔피언';
+  });
+  [...$('posSeg').children].forEach(b=>b.setAttribute('aria-checked',String(+b.dataset.i===MY)));
+  const saved=store.get(poolKey());
+  $('pool').value=saved!==null?saved:(DEFAULT_POOL[LANES[MY]]||'');
+  $('poolLbl').textContent=`내 ${LANES[MY]} 챔프폭`;
+  store.set('pr.pos',LANES[MY]);
+}
+function applyFilter(){$('fPool').setAttribute('aria-pressed',String(ONLY_POOL));$('fAll').setAttribute('aria-pressed',String(!ONLY_POOL));store.set('pr.only',ONLY_POOL?'1':'0');}
+
+function find(v){
+  const s=norm(v||'');if(!s)return null;
+  for(const k of NAMES)if(norm(k)===s)return k;
+  for(const [a,k] of Object.entries(ALIAS))if(norm(a)===s)return k;
+  return undefined;
+}
+// 구간 값: 0-10 / 10-20 / 20-30 / 30+
+function phaseOf(name,lane){
+  const s=STATS&&STATS[norm(name)],r=s&&s[LANES[lane]];
+  if(r&&r.phase)return {v:r.phase.slice(),src:'stat',games:r.games,wr:r.winRate};
+  if(!D[name])return {v:[3,3,3,3],src:'none'};
+  const [e,m,l]=D[name];return {v:[e,m,(m+l)/2,l],src:'est'};
+}
+function curve(name,prof,lane){
+  if(!name)return [3,3,3,3];
+  const c=phaseOf(name,lane).v;
+  const adj=prof===1?[.5,.4,.2,.2]:prof===-1?[-.8,-.5,-.3,-.3]:[0,0,0,0];
+  return c.map((v,i)=>v+adj[i]);
+}
+const W=[1,1,1,1,1]; const JW0=1.3; // 0~10분엔 정글 영향력 가중
+
+function teamCurve(names,profs){
+  const out=[0,0,0,0];
+  names.forEach((n,i)=>{const c=curve(n,profs[i],i);c.forEach((v,p)=>out[p]+=v*(p===0&&i===1?JW0:1));});
+  return out;
+}
+function comp(names){
+  const ch=names.filter(Boolean),tags=ch.map(n=>D[n][4]).join('');
+  const has=t=>tags.includes(t);
+  const m=ch.filter(n=>D[n][4].includes('M')).length,a=ch.filter(n=>D[n][4].includes('A')).length;
+  return {n:ch.length,E:has('E'),F:has('F'),P:has('P'),S:has('S'),m,a,tf:names.reduce((s,n)=>s+(n?D[n][3]:3),0)};
+}
+function tfScore(c){
+  let s=c.tf;
+  if(c.E)s+=2;if(c.F)s+=2;if(c.P)s+=1;
+  if(c.n>=4&&(c.m===0||c.a===0))s-=2;
+  return s;
+}
+function analyze(an,ap,en){
+  const ep=[0,0,0,0,0];
+  const A=teamCurve(an,ap),E=teamCurve(en,ep);
+  const adv=A.map((v,i)=>Math.round(clamp(50+(v-E[i])*3.2,8,92)));
+  const ca=comp(an),ce=comp(en);
+  const ta=tfScore(ca),te=tfScore(ce);
+  const tfAdv=Math.round(clamp(50+(ta-te)*4,8,92));
+  // 운영 난이도
+  let mc=45;const why=[];
+  if(ca.n>=3&&!ca.E){mc+=14;why.push('이니시를 걸 챔피언이 없어서 싸움을 먼저 열기 어려워요.');}
+  if(ca.n>=3&&!ca.F){mc+=12;why.push('앞라인이 없어서 한타에서 딜러가 바로 노출돼요.');}
+  if(ca.n>=4&&(ca.m===0||ca.a===0)){mc+=8;why.push(`피해가 ${ca.m===0?'물리':'마법'} 한쪽으로 쏠려서 상대가 방어템 하나로 막기 쉬워요.`);}
+  const early=(adv[0]+adv[1])/2,late=(adv[2]+adv[3])/2;
+  if(early<45&&late>55){mc+=12;why.push('초반이 약하고 후반이 강해요. 20분까지 손해 없이 버티는 운영이 필요해요.');}
+  if(early>55&&late<45){mc+=12;why.push('초반이 강하고 후반이 약해요. 20~25분 안에 끝내지 못하면 역전당하기 쉬워요.');}
+  if(adv.every(v=>v<45)){mc+=14;why.push('모든 구간에서 열세예요. 상대 실수를 받아먹는 수비적 운영이 필요해요.');}
+  if(adv.every(v=>v>55)){mc-=18;why.push('모든 구간에서 우세해요. 무리하지만 않으면 이기는 판이에요.');}
+  if(ca.S){mc-=5;why.push('스플릿 챔피언이 있어서 사이드 운영으로 선택지가 생겨요.');}
+  if(tfAdv>58){mc-=6;why.push('한타 구도가 좋아서 오브젝트 앞 정면 싸움으로 풀 수 있어요.');}
+  if(tfAdv<42){mc+=8;why.push('한타 구도가 불리해서 정면 5:5를 피하고 끊어먹기로 풀어야 해요.');}
+  if(!why.length)why.push('구도상 큰 약점이 없어요. 시야와 오브젝트 타이밍만 잘 챙기면 돼요.');
+  mc=Math.round(clamp(mc,5,95));
+  return {adv,tfAdv,ta,te,ca,ce,mc,mcWhy:why};
+}
+const stTxt=v=>v>=62?'아군 우세':v>=54?'약간 우세':v>46?'비슷함':v>38?'약간 열세':'상대 우세';
+const stCol=v=>v>=54?'var(--ally)':v>46?'var(--muted)':'var(--enemy)';
+
+function read(){
+  const an=[],ap=[],en=[];let bad=[];
+  LANES.forEach((l,i)=>{
+    const ai=$('a'+i),ei=$('e'+i);
+    const a=find(ai.value),e=find(ei.value);
+    ai.classList.toggle('bad',a===undefined);ei.classList.toggle('bad',e===undefined);
+    if(a===undefined)bad.push('아군 '+l);if(e===undefined)bad.push('상대 '+l);
+    an.push(a||null);en.push(e||null);ap.push(i===MY?0:+$('p'+i).value);
+  });
+  return {an,ap,en,bad};
+}
+
+function svgChart(adv){
+  const w=640,h=170,px=44,py=20,iw=w-px*2,ih=h-py*2-18;
+  const x=i=>px+iw*(i/3),y=v=>py+ih*(1-(v-10)/80);
+  const pts=adv.map((v,i)=>`${x(i)},${y(v)}`).join(' ');
+  let g='';
+  [10,30,50,70,90].forEach(v=>{g+=`<line x1="${px}" x2="${w-px}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)" stroke-width="1" ${v===50?'':'stroke-dasharray="3 4"'}/><text x="${px-8}" y="${y(v)+4}" text-anchor="end" font-size="11" fill="var(--muted)" font-family="IBM Plex Mono,monospace">${v}</text>`});
+  const area=`${x(0)},${y(50)} ${pts} ${x(3)},${y(50)}`;
+  let dots='';adv.forEach((v,i)=>{dots+=`<circle cx="${x(i)}" cy="${y(v)}" r="5" fill="${stCol(v)}" stroke="var(--panel)" stroke-width="2"/><text x="${x(i)}" y="${h-6}" text-anchor="middle" font-size="12" fill="var(--muted)">${PH[i]}</text>`});
+  return `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="시간대별 아군 우세 추이">${g}<polygon points="${area}" fill="var(--ally)" fill-opacity=".12"/><polyline points="${pts}" fill="none" stroke="var(--ally)" stroke-width="2.5"/>${dots}<text x="${w-px}" y="${y(88)}" text-anchor="end" font-size="11" fill="var(--ally)">아군 우세</text><text x="${w-px}" y="${y(13)}" text-anchor="end" font-size="11" fill="var(--enemy)">상대 우세</text></svg>`;
+}
+
+function plan(r){
+  const p=[],a=r.adv,peak=a.indexOf(Math.max(...a)),low=a.indexOf(Math.min(...a));
+  if(a[0]>=54)p.push('0~10분: 바텀·강가 주도권이 있어요. 첫 용과 유충을 적극적으로 가져가고, 파이크·블리츠 같은 캐치형이면 로밍으로 상체에 이득을 넘기세요.');
+  else if(a[0]<=46)p.push('0~10분: 초반 교전은 피하고 와드로 상대 정글 동선을 확인하세요. 첫 용은 무리하게 싸우지 말고 교환(유충·포탑)으로 받으세요.');
+  else p.push('0~10분: 비슷한 구간이에요. 상대 정글 위치를 시야로 먼저 파악하는 쪽이 이겨요.');
+  if(a[1]>=54)p.push('10~20분: 우세 구간이에요. 전령·용을 묶어서 미드 1차 포탑을 밀고 맵을 넓히세요.');
+  else if(a[1]<=46)p.push('10~20분: 상대가 강한 구간이에요. 웨이브를 받아먹으며 시야 싸움으로 시간을 버세요.');
+  if(a[2]>=54||a[3]>=54)p.push(`20분 이후: ${a[3]>=a[2]?'30분 이후':'20~30분'}에 가장 강해져요. 이 타이밍에 바론 앞 시야를 먼저 잡고 한타를 거세요.`);
+  else if(a[3]<=46)p.push('20분 이후: 시간이 갈수록 불리해져요. 25분 전에 바론이나 억제기로 끝낼 각을 만드세요.');
+  p.push(`가장 강한 구간은 ${PH[peak]}, 가장 약한 구간은 ${PH[low]}이에요.`);
+  if(r.tfAdv<45)p.push('정면 5:5 한타는 불리해요. 상대가 시야 잡으러 올 때 한 명씩 끊는 캐치로 숫자 우위를 먼저 만드세요.');
+  return p;
+}
+
+function render(){
+  const {an,ap,en,bad}=read();
+  $('badMsg').hidden=!bad.length;
+  $('badMsg').textContent=bad.length?`목록에 없는 이름: ${bad.join(', ')} (자동완성에서 골라주세요)`:'';
+  const filled=an.filter(Boolean).length+en.filter(Boolean).length;
+  $('count').textContent=`입력 ${filled} / 10 · 비어 있는 칸은 평균값으로 계산`;
+  const r=analyze(an,ap,en);
+  const peak=r.adv.indexOf(Math.max(...r.adv));
+  $('phases').innerHTML=r.adv.map((v,i)=>{
+    const left=v>=50?50:v,width=Math.abs(v-50);
+    return `<div class="ph${i===peak&&v>52?' peak':''}"><span class="t">${PH[i]}</span><span class="pct" style="color:${stCol(v)}">${v}%</span><div class="dv"><i style="left:${left}%;width:${width}%;background:${stCol(v)}"></i></div><span class="st" style="color:${stCol(v)}">${stTxt(v)}</span></div>`}).join('');
+  $('chart').innerHTML=svgChart(r.adv);
+
+  $('tfBig').innerHTML=`<b style="color:${stCol(r.tfAdv)}">${r.tfAdv}%</b><span class="pill" style="color:${stCol(r.tfAdv)}">${stTxt(r.tfAdv)}</span>`;
+  const mx=Math.max(r.ta,r.te,1);
+  $('tfVs').innerHTML=[['아군',r.ta,'var(--ally)'],['상대',r.te,'var(--enemy)']].map(([n,v,c])=>`<div class="vs"><span>${n}</span><span class="bar"><i style="width:${Math.round(v/mx*100)}%;background:${c}"></i></span><span class="v">${v.toFixed(0)}</span></div>`).join('');
+  const tw=[];
+  const f=(c,s)=>`${s}: 이니시 ${c.E?'있음':'없음'} · 앞라인 ${c.F?'있음':'없음'} · 보호 ${c.P?'있음':'없음'} · 피해 물리 ${c.a}/마법 ${c.m}`;
+  tw.push(f(r.ca,'아군'));tw.push(f(r.ce,'상대'));
+  $('tfWhy').innerHTML=tw.map(t=>`<li>${t}</li>`).join('');
+
+  const mcL=r.mc<35?['쉬움','var(--ok)']:r.mc<60?['보통','var(--warn)']:['어려움','var(--enemy)'];
+  $('mcBig').innerHTML=`<b style="color:${mcL[1]}">${mcL[0]}</b><span class="pill" style="color:${mcL[1]}">난이도 ${r.mc}</span>`;
+  $('mcWhy').innerHTML=r.mcWhy.map(t=>`<li>${t}</li>`).join('');
+  $('plan').innerHTML=plan(r).map(t=>`<li>${t}</li>`).join('');
+
+  // 추천: 내 자리에 각 후보를 넣어 재계산
+  const lane=LANES[MY],mine=an[MY],foe=en[MY];
+  $('rkTitle').textContent=mine?`${lane} 추천 (현재 선택: ${mine})`:`${lane} 추천 챔피언`;
+  const others=an.map((v,i)=>i===MY?null:v);
+  const ca0=comp(others);
+  const taken=new Set([...en.filter(Boolean),...others.filter(Boolean)]);
+  const pool=new Set(poolList());
+  let cands=R[lane].filter(c=>!taken.has(c));
+  if(ONLY_POOL)cands=cands.filter(c=>pool.has(c));
+  const base=(()=>{const x=analyze(others,ap,en);return x.adv.reduce((s,v)=>s+v,0)/4})();
+  const rows=cands.map(c=>{
+    const t=others.slice();t[MY]=c;const x=analyze(t,ap,en);
+    const avg=x.adv.reduce((s,v)=>s+v,0)/4;
+    let lanePart=0;
+    const pc=phaseOf(c,MY),pf=foe?phaseOf(foe,MY):null;
+    if(foe){lanePart=(pc.v[0]-pf.v[0])*3;}
+    const score=clamp(avg+.6*(x.tfAdv-50)-.35*(x.mc-50)+lanePart+(pool.has(c)?2:0),0,100);
+    const own=pc.v;
+    const mx=Math.max(...own);
+    const peaks=own.map((v,i)=>v===mx?i:-1).filter(i=>i>=0);
+    const w=[];
+    w.push(`본인 전성기 ${peaks.length===4?'전 구간 고름':peaks.map(i=>PH[i]).join(', ')}`);
+    if(ca0.n>=2&&!ca0.E&&D[c][4].includes('E'))w.push('부족한 이니시 채움');
+    if(ca0.n>=2&&!ca0.F&&D[c][4].includes('F'))w.push('부족한 앞라인 채움');
+    if(ca0.n>=3&&ca0.m===0&&D[c][4].includes('M'))w.push('마법 피해 보충');
+    if(ca0.n>=3&&ca0.a===0&&D[c][4].includes('A'))w.push('물리 피해 보충');
+    if(foe){const d=pc.v[0]-pf.v[0];w.push(`vs ${foe} 라인전 ${d>0?'유리':d<0?'불리':'비슷'}`);}
+    w.push(`팀 평균 우세 ${avg-base>=0?'+':''}${(avg-base).toFixed(1)} · 한타 ${x.tfAdv}%`);
+    w.push(pc.src==='stat'?`통계 ${pc.games}판 · 승률 ${(pc.wr*100).toFixed(1)}%`:'추정값');
+    return {c,score,w:w.join(' · '),mine:pool.has(c)};
+  }).sort((a,b)=>b.score-a.score).slice(0,12);
+  $('ranks').innerHTML=rows.length?rows.map((o,i)=>`<div class="rank"><span class="n">${i+1}</span><span class="name">${o.c}${o.mine?'<span class="badge">챔프폭</span>':''}</span><span class="bar"><i style="width:${Math.round(o.score)}%"></i></span><span class="v">${Math.round(o.score)}</span><span class="why">${o.w}</span></div>`).join('')
+    :`<p class="empty">${ONLY_POOL?`${lane} 챔프폭에 남은 챔피언이 없어요. 위 칸에 챔프폭을 넣거나 '전체'로 바꿔보세요.`:'추천할 챔피언이 없어요.'}</p>`;
+}
+
+LANES.forEach((l,i)=>{$('a'+i).addEventListener('input',render);$('e'+i).addEventListener('input',render);$('p'+i).addEventListener('change',render);});
+$('posSeg').addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;MY=+b.dataset.i;applyPos();render();});
+$('pool').addEventListener('input',()=>{store.set(poolKey(),$('pool').value);render();});
+$('fPool').addEventListener('click',()=>{ONLY_POOL=true;applyFilter();render();});
+$('fAll').addEventListener('click',()=>{ONLY_POOL=false;applyFilter();render();});
+applyPos();applyFilter();
+function setAll(a,e,p){LANES.forEach((l,i)=>{$('a'+i).value=a[i]||'';$('e'+i).value=e[i]||'';$('p'+i).value=String(p[i]||0);});render();}
+function sample(){const a=['레넥톤','리신','아리','징크스','쓰레쉬'];a[MY]='';setAll(a,['나서스','카서스','아지르','케이틀린','룰루'],[1,0,0,0,0]);}
+$('sample').addEventListener('click',sample);
+$('clear').addEventListener('click',()=>setAll([],[],[]));
+sample();
+async function loadStats(){
+  try{
+    const res=await fetch('data/stats.json',{cache:'no-cache'});
+    if(!res.ok)throw new Error(res.status);
+    const j=await res.json();
+    const champs=j.champions||{};
+    if(!Object.keys(champs).length)throw new Error('empty');
+    META=j.meta||{};STATS={};
+    for(const [name,lanes] of Object.entries(champs)){
+      STATS[norm(name)]=lanes;
+      const total=Object.values(lanes).reduce((s,r)=>s+r.games,0);
+      let key=NAMES.find(k=>norm(k)===norm(name));
+      if(!key){ // 추정 표에 없는 챔피언은 통계값으로 추가 (한타·태그는 중립)
+        const best=Object.values(lanes).sort((a,b)=>b.games-a.games)[0].phase;
+        D[name]=[best[0],best[1],best[3],3,''];key=name;
+      }
+      for(const [ln,r] of Object.entries(lanes))if(R[ln]&&r.games>=total*0.1&&!R[ln].includes(key))R[ln].push(key);
+    }
+    fillNames();
+    const n=Object.keys(champs).length;
+    $('dataStatus').textContent=`데이터: Riot API 통계 (패치 ${(META.patches||[]).join(', ')} · ${(META.tiers||[]).join('/')} · 경기 ${META.matches}개 · 챔피언 ${n}개 · ${String(META.generated||'').slice(0,10)} 갱신), 표본 부족 챔피언은 추정값`;
+    $('srcNote').innerHTML='<b>데이터 출처 안내:</b> 시간대 점수는 Riot 공식 API로 모은 랭크 경기에서 계산해요. 0~10분, 10~20분, 20~30분은 같은 포지션 상대와의 골드 차이 변화, 30분 이후는 30분 넘게 간 경기의 승률이 근거예요. 표본이 적은 챔피언·포지션과 한타 성향은 직접 매긴 추정값을 써요.';
+    render();
+  }catch(e){
+    $('dataStatus').textContent='데이터: 통계 파일이 아직 없어 추정 표 사용 중';
+  }
+}
+loadStats();
+</script>
+</body>
+</html>
