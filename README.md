@@ -101,19 +101,26 @@ git add data/stats.json && git commit -m "통계 갱신" && git push
 
 페이지에 `이름#태그`를 넣으면 최근 랭크 경기(최대 100판)와 챔피언 숙련도를 보고 포지션별 챔프폭을 자동으로 채워요. Riot API 키를 페이지에 넣으면 누구나 볼 수 있어서, 키를 숨겨주는 작은 중계 서버(`worker/worker.js`)를 Cloudflare Workers 무료 플랜에 올려서 써요.
 
-### 대시보드로 배포하기 (설치 없이)
-1. [dash.cloudflare.com](https://dash.cloudflare.com/)에 가입하고 **Workers & Pages → Create → Create Worker**
-2. 이름을 `lol-pick-reader`로 하고 **Deploy** → **Edit code**에서 기본 코드를 지우고 `worker/worker.js` 내용을 붙여넣은 뒤 **Deploy**
-3. Worker의 **Settings → Variables and Secrets**에서 추가
+### 대시보드로 배포하기 (설치 없이, 15분)
+1. [dash.cloudflare.com](https://dash.cloudflare.com/) 가입 (무료 플랜)
+2. **Workers & Pages → Create → Create Worker** → 이름 `lol-pick-reader` → **Deploy**
+3. **Edit code** → 기본 코드를 모두 지우고 [`worker/worker.js`](worker/worker.js) 내용을 붙여넣기 → **Deploy**
+4. **KV 저장소 만들기:** 왼쪽 메뉴 **Storage & Databases → KV → Create** → 이름 `lol-pick-reader-pool`
+5. Worker → **Settings → Bindings → Add → KV namespace** → 변수 이름 `POOL_KV`, 4번에서 만든 저장소 선택
+6. Worker → **Settings → Variables and Secrets → Add**
    - `RIOT_API_KEY` : 종류 **Secret**, 값은 Riot API 키
    - `ALLOWED_ORIGIN` : 종류 **Text**, 값 `https://wandadj.github.io`
-   - `ALLOWED_RIOT_IDS` : 종류 **Text**, 조회를 허용할 아이디를 쉼표로 (예: `동재#KR1, 친구#KR1`)
-4. **KV 저장소 연결 (권장)**: 왼쪽 메뉴 **Storage & Databases → KV → Create**로 `lol-pick-reader-pool`을 만들고, Worker의 **Settings → Bindings → Add → KV namespace**에서 변수 이름 `POOL_KV`로 연결
-5. Worker 주소(`https://lol-pick-reader.<계정>.workers.dev`)를 `data/config.json`의 `poolApi`에 넣고 커밋
+   - `ALLOWED_RIOT_IDS` : 종류 **Text**, 나와 지인 아이디를 쉼표로 (예: `동재#KR1, 친구#KR1`)
+7. Worker → **Settings → Trigger Events (Triggers) → Add → Cron Triggers** → **5분마다** (`*/5 * * * *`)
+8. Worker 주소(`https://lol-pick-reader.<계정>.workers.dev`)를 `data/config.json`의 `poolApi`에 넣고 커밋
 
 ```json
 { "poolApi": "https://lol-pick-reader.<계정>.workers.dev" }
 ```
+
+**지인 추가·삭제:** 6번의 `ALLOWED_RIOT_IDS` 값만 고치고 저장하면 돼요. 코드는 다시 붙여넣을 필요 없어요.
+
+**데이터는 어디에?** 4번의 KV 저장소(내 Cloudflare 계정)에 아이디별로 저장돼요. 경기마다 내 포지션·챔피언·승패·시간만 남기고, 같이 한 다른 플레이어 정보는 저장하지 않아요. GitHub에는 올라가지 않아서 다른 사람은 볼 수 없어요.
 
 ### 명령줄로 배포하기 (Node.js가 있으면)
 ```bash
@@ -128,8 +135,9 @@ Riot 정책상 **Personal API Key는 나 혼자나 작은 지인 모임용**이�
 PC 도우미를 쓰는 사람은 이 서버 없이도 자기 클라이언트에서 챔프폭을 불러올 수 있어요.
 
 ### 챔프폭은 어떻게 고르나요
-- 한 번 불러올 때 **새로 한 경기만 최대 30판** 받아요 (Cloudflare 무료 플랜의 요청당 외부 호출 50회 한도 안).
-- KV를 연결하면 아이디별로 경기를 쌓아서 **최근 랭크 100판**까지 봐요. 처음엔 30판 → 다시 불러오면 60판 → 90판 → 100판처럼 늘어나고, 그다음부터는 새 경기만 받아서 빨라요. KV가 없으면 매번 최근 30판만 봐요.
+- 아이디별로 랭크·빠른 대전·일반·신속 대전 경기를 **최근 300판**까지 쌓아요 (칼바람·아레나 제외).
+- 한 번 불러올 때 새 경기를 최대 35판 받고, 예약 실행이 켜져 있으면 등록된 아이디를 한 명씩 돌아가며 5분마다 40판씩 더 모아요. 처음 300판을 채우는 데 한 명당 40분 정도 걸리고, 그다음부터는 새 경기만 받아요.
+- KV가 없으면 매번 최근 35판만 봐요.
 - 포지션별 챔프폭 기준: 그 포지션에서 **2판 이상**, 또는 **1판 + 숙련도 3만 점 이상**. 주 포지션이거나 5판 이상 간 포지션이면 최근엔 안 했어도 **숙련도 5만 점 이상**인 챔피언을 포함해요.
 - 추천 목록에 "내 기록 21판 12승 (57%)"처럼 표시하고, 5판 미만은 승률 대신 **표본 적음**으로 표시해요.
 

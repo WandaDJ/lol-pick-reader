@@ -16,8 +16,10 @@
  *   ALLOWED_RIOT_IDS (Text)       조회를 허용할 아이디 목록, 쉼표로 구분 (예: 동재#KR1, 친구#KR1)
  *                                  Personal API Key는 개인·지인용이라 이 값을 꼭 넣으세요.
  *                                  비우면 누구나 조회 가능 (Production Key를 받은 뒤에만)
- *   POOL_KV         (KV 바인딩)    선택. 연결하면 아이디별 경기를 최대 100판까지 쌓아둬요.
- *                                  없으면 매번 최근 30판만 봐요.
+ *   POOL_KV         (KV 바인딩)    아이디별 경기를 최근 300판까지 쌓아둬요.
+ *                                  없으면 매번 최근 35판만 봐요.
+ *   예약 실행(Cron)  선택. "5분마다"로 켜두면 ALLOWED_RIOT_IDS의 아이디들을 돌아가며
+ *                                  5분마다 새 경기를 모아둬요. (KV 필요)
  *
  * Riot API 키는 이 서버 안에서만 쓰이고 페이지로는 절대 내려가지 않아요.
  */
@@ -25,8 +27,11 @@
 const PLATFORM = "kr";
 const REGION = "asia";
 const RANKED_SOLO = 420;
-const KEEP_MATCHES = 100;       // 아이디별로 보관하는 최근 경기 수
-const NEW_PER_LOAD = 30;        // 한 번 불러올 때 새로 받는 경기 수 (무료 플랜 외부 호출 50회 한도 안)
+const KEEP_MATCHES = 300;       // 아이디별로 보관하는 최근 경기 수
+const NEW_PER_LOAD = 35;        // 한 번 불러올 때 새로 받는 경기 수 (무료 플랜 외부 호출 50회 한도 안)
+const NEW_PER_CRON = 40;        // 예약 실행 한 번에 새로 받는 경기 수
+// 포지션이 있는 큐만: 솔로·자유 랭크, 빠른 대전, 일반 드래프트, 신속 대전
+const ID_QUERIES = ["type=ranked", "queue=490", "queue=400", "queue=480"];
 const BATCH = 10;               // 동시에 받는 경기 수
 const MASTERY_COUNT = 40;
 const CACHE_SECONDS = 10 * 60;  // 같은 아이디 응답 캐시
@@ -100,6 +105,7 @@ function myRecord(match, puuid, names) {
   const info = match && match.info;
   const me = info && info.participants.find((p) => p.puuid === puuid);
   if (!me || !POS[me.teamPosition] || info.gameDuration < 15 * 60) return { skip: true, t: info?.gameCreation || 0 };
+  // 내 기록만 남김 (같이 한 다른 플레이어 정보는 저장하지 않음)
   return {
     lane: POS[me.teamPosition],
     champ: names.byId[String(me.championName).toLowerCase()] || me.championName,
@@ -115,46 +121,94 @@ export function isAllowed(env, id) {
   return !list.length || list.includes(idKey(`${id.name}#${id.tag}`));
 }
 
-export async function buildPool(env, riotId) {
-  const id = parseRiotId(riotId);
-  if (!id) throw new HttpError(400, "아이디는 '이름#태그' 형식으로 입력하세요. 예: Hide on bush#KR1");
-  if (!isAllowed(env, id)) throw new HttpError(403, "이 서버는 등록된 아이디만 조회할 수 있어요. 서버 관리자에게 아이디 등록을 요청하세요.");
+const matchNum = (m) => Number(String(m).split("_")[1]) || 0;
 
+async function getAccount(env, id) {
+  const key = `acct:${idKey(`${id.name}#${id.tag}`)}`;
+  const cached = env.POOL_KV && (await env.POOL_KV.get(key, "json"));
+  if (cached) return cached;
   const account = await riot(env, REGION,
     `/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(id.name)}/${encodeURIComponent(id.tag)}`);
   if (!account) throw new HttpError(404, "그 아이디를 찾을 수 없어요. 이름과 태그를 다시 확인하세요.");
-  const puuid = account.puuid;
-  const names = await championNames(env);
+  const slim = { puuid: account.puuid, gameName: account.gameName, tagLine: account.tagLine };
+  if (env.POOL_KV) await env.POOL_KV.put(key, JSON.stringify(slim), { expirationTtl: 7 * 24 * 3600 });
+  return slim;
+}
 
-  const [mastery, recentIds] = await Promise.all([
-    riot(env, PLATFORM, `/lol/champion-mastery/v4/champion-masteries/by-puuid/${puuid}/top?count=${MASTERY_COUNT}`),
-    riot(env, REGION, `/lol/match/v5/matches/by-puuid/${puuid}/ids?queue=${RANKED_SOLO}&start=0&count=${KEEP_MATCHES}`),
-  ]);
-  const ids = recentIds || [];
+/** 포지션이 있는 큐의 최근 경기 ID (최신순, 최대 KEEP_MATCHES) */
+async function matchIdList(env, puuid, full) {
+  const base = `/lol/match/v5/matches/by-puuid/${puuid}/ids?`;
+  const lists = await Promise.all(ID_QUERIES.map((q) => riot(env, REGION, `${base}${q}&start=0&count=100`)));
+  if (full && (lists[0] || []).length === 100) { // 처음 채울 때는 랭크를 더 과거까지
+    for (const start of [100, 200]) {
+      const more = (await riot(env, REGION, `${base}type=ranked&start=${start}&count=100`)) || [];
+      lists.push(more);
+      if (more.length < 100) break;
+    }
+  }
+  return [...new Set(lists.flat().filter(Boolean))].sort((a, b) => matchNum(b) - matchNum(a)).slice(0, KEEP_MATCHES);
+}
 
-  // 저장된 기록 불러오기
+/** 새 경기만 최대 budget개 받아서 KV에 쌓음 */
+export async function syncUser(env, puuid, budget, names) {
   const kvKey = `pool:${puuid}`;
   const stored = (env.POOL_KV && (await env.POOL_KV.get(kvKey, "json"))) || { matches: {} };
   const known = stored.matches;
-
-  // 새 경기만, 최신 순으로 최대 NEW_PER_LOAD개
-  const todo = ids.filter((m) => !(m in known)).slice(0, NEW_PER_LOAD);
+  const ids = await matchIdList(env, puuid, Object.keys(known).length < KEEP_MATCHES - 50);
+  const todo = ids.filter((m) => !(m in known)).slice(0, budget);
   for (let i = 0; i < todo.length; i += BATCH) {
     const chunk = todo.slice(i, i + BATCH);
     const got = await Promise.all(chunk.map((m) => riot(env, REGION, `/lol/match/v5/matches/${m}`)));
     chunk.forEach((m, j) => { if (got[j]) known[m] = myRecord(got[j], puuid, names); });
   }
-
-  // 최근 100판 범위만 남김 (목록에 없는 오래된 경기는 정리)
-  const keep = new Set(ids);
+  // 최신 300판만 남김
+  const keep = new Set([...new Set([...Object.keys(known), ...ids])].sort((a, b) => matchNum(b) - matchNum(a)).slice(0, KEEP_MATCHES));
   for (const m of Object.keys(known)) if (!keep.has(m)) delete known[m];
-  if (env.POOL_KV) await env.POOL_KV.put(kvKey, JSON.stringify({ matches: known, updated: Date.now() }));
+  const pending = ids.filter((m) => !(m in known)).length;
+  if (env.POOL_KV && (todo.length || stored.pending !== pending)) {
+    await env.POOL_KV.put(kvKey, JSON.stringify({ matches: known, pending, updated: Date.now() }));
+  }
+  return { known, pending };
+}
+
+/** 예약 실행: 등록된 아이디를 한 명씩 돌아가며 새 경기를 모음 */
+export async function cronSync(env) {
+  const list = String(env.ALLOWED_RIOT_IDS || "").split(",").map((x) => x.trim()).filter(Boolean);
+  if (!list.length || !env.POOL_KV || !env.RIOT_API_KEY) return null;
+  const n = Number(await env.POOL_KV.get("cron:next")) || 0;
+  const raw = list[n % list.length];
+  await env.POOL_KV.put("cron:next", String((n + 1) % list.length));
+  const id = parseRiotId(raw);
+  if (!id) return { riotId: raw, error: "형식 오류" };
+  try { // 한 아이디에서 문제가 생겨도 다음 실행 때 다음 사람으로 넘어감
+    const account = await getAccount(env, id);
+    const names = await championNames(env);
+    const { known, pending } = await syncUser(env, account.puuid, NEW_PER_CRON, names);
+    return { riotId: raw, stored: Object.keys(known).length, pending };
+  } catch (e) {
+    return { riotId: raw, error: e.message };
+  }
+}
+
+export async function buildPool(env, riotId) {
+  const id = parseRiotId(riotId);
+  if (!id) throw new HttpError(400, "아이디는 '이름#태그' 형식으로 입력하세요. 예: Hide on bush#KR1");
+  if (!isAllowed(env, id)) throw new HttpError(403, "이 서버는 등록된 아이디만 조회할 수 있어요. 서버 관리자에게 아이디 등록을 요청하세요.");
+
+  const account = await getAccount(env, id);
+  const puuid = account.puuid;
+  const names = await championNames(env);
+  const [mastery, synced] = await Promise.all([
+    riot(env, PLATFORM, `/lol/champion-mastery/v4/champion-masteries/by-puuid/${puuid}/top?count=${MASTERY_COUNT}`),
+    syncUser(env, puuid, NEW_PER_LOAD, names),
+  ]);
+  const { known, pending } = synced;
 
   const positions = {};
   const posGames = {};
-  let total = 0;
+  let total = 0, skipped = 0;
   for (const r of Object.values(known)) {
-    if (r.skip) continue;
+    if (r.skip) { skipped += 1; continue; }
     total += 1;
     const list = (positions[r.lane] ||= []);
     let row = list.find((x) => x.name === r.champ);
@@ -170,8 +224,10 @@ export async function buildPool(env, riotId) {
     riotId: `${account.gameName}#${account.tagLine}`,
     mainPosition,
     totalGames: total,
-    pending: ids.filter((m) => !(m in known)).length,
+    skippedGames: skipped,
+    pending,
     stored: !!env.POOL_KV,
+    autoSync: !!(env.POOL_KV && String(env.ALLOWED_RIOT_IDS || "").trim()),
     positions,
     positionGames: posGames,
     mastery: (mastery || []).map((c) => ({
@@ -183,6 +239,10 @@ export async function buildPool(env, riotId) {
 }
 
 export default {
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(cronSync(env).catch(() => null));
+  },
+
   async fetch(request, env, ctx) {
     const cors = corsHeaders(request, env);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });

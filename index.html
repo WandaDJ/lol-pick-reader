@@ -295,7 +295,7 @@ const PH=["0~10분","10~20분","20~30분","30분 이후"];
 const $=id=>document.getElementById(id);
 const norm=s=>s.replace(/\s+/g,'').toLowerCase();
 // 페이지를 고칠 때마다 올리는 버전 (날짜.번호)
-const PAGE_VERSION='2026.10.27.2';
+const PAGE_VERSION='2026.10.27.3';
 let HELPER_VER=null;
 function updateVer(){
   const el=document.getElementById('verLine');if(!el)return;
@@ -866,7 +866,7 @@ function applyPool(j){
   if(j.mainPosition&&!liveSig){MY=LANES.indexOf(j.mainPosition);}
   applyPos();ONLY_POOL=true;applyFilter();render();
   const top=(j.positions&&j.mainPosition&&j.positions[j.mainPosition]||[]).slice(0,3).map(x=>`${x.name} ${x.games}판`).join(', ');
-  const more=j.pending?(j.stored?` · 다시 불러오면 ${Math.min(j.pending,30)}판 더 확인해요`:' · 서버 누적 저장이 꺼져 있어 최근 30판만 봐요'):'';
+  const more=j.pending?(j.autoSync?` · 아직 ${j.pending}판 남음, 서버가 5분마다 자동으로 모으고 있어요`:j.stored?` · 다시 불러오면 ${Math.min(j.pending,35)}판 더 확인해요`:' · 서버 누적 저장이 꺼져 있어 최근 35판만 봐요'):'';
   let kind='최근 랭크',detail='';
   if(j.source==='api'){
     kind='Riot 기록 일반·랭크';
