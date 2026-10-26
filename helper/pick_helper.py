@@ -35,7 +35,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 PORT = int(os.environ.get("PICK_HELPER_PORT", "27150"))
 SITE = os.environ.get("PICK_HELPER_SITE", "https://wandadj.github.io/lol-pick-reader/")
 SITE_FILES = ["index.html", "data/stats.json", "data/config.json"]
@@ -528,13 +528,24 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+class QuietServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        # 브라우저가 응답 도중 연결을 끊은 경우(새로고침, 탭 닫기)는 정상이라 조용히 넘김
+        err = sys.exc_info()[1]
+        if isinstance(err, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def main():
     if self_update():
         return
     url = f"http://127.0.0.1:{PORT}/"
     print(f"픽창 판독기 PC 도우미 {VERSION}")
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+        server = QuietServer(("127.0.0.1", PORT), Handler)
     except OSError:
         print("이미 실행 중이에요. 브라우저를 엽니다.")
         webbrowser.open(url)
