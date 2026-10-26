@@ -169,6 +169,13 @@ details.fold[open] .ssum{display:none}
       <div class="idctl"><input id="riotId" placeholder="이름#태그 (예: Hide on bush#KR1)" autocomplete="off" maxlength="42"><button type="submit" id="idBtn">불러오기</button></div>
       <span class="count" id="idStatus"></span>
     </form>
+    <form class="idrow" id="keyForm" hidden>
+      <label class="label" for="keyIn">전적 더 보기 (Riot API 키)</label>
+      <span class="note" id="keyNote">클라이언트는 최근 20판 정도만 보여줘요. 내 Riot API 키를 넣으면 내 계정 경기를 최근 300판까지 받아요. 키는 이 PC에만 저장되고 Riot 서버에만 보내요.</span>
+      <div class="idctl" id="keyCtl"><input id="keyIn" type="password" placeholder="RGAPI-로 시작하는 키" autocomplete="off" spellcheck="false"><button type="submit" id="keyBtn">저장</button></div>
+      <div class="idctl" id="keyOn" hidden><span class="count" id="keyState"></span><button type="button" id="keyDel">키 삭제</button></div>
+      <span class="count" id="keyMsg"></span>
+    </form>
     <label class="proftoggle"><input type="checkbox" id="profOn"><span>아군 실력을 알 때만 입력 <span class="note">(듀오, 채팅으로 들은 경우 등. 솔로 랭크 픽창에선 닉네임이 가려져 보통 알 수 없어요)</span></span></label>
     <div class="teams">
       <div class="team" id="allyBox">
@@ -288,7 +295,7 @@ const PH=["0~10분","10~20분","20~30분","30분 이후"];
 const $=id=>document.getElementById(id);
 const norm=s=>s.replace(/\s+/g,'').toLowerCase();
 // 페이지를 고칠 때마다 올리는 버전 (날짜.번호)
-const PAGE_VERSION='2026.10.27.1';
+const PAGE_VERSION='2026.10.27.2';
 let HELPER_VER=null;
 function updateVer(){
   const el=document.getElementById('verLine');if(!el)return;
@@ -784,12 +791,44 @@ async function loadConfig(){
     $('riotId').hidden=true;$('idBtn').disabled=false;$('idBtn').textContent='내 계정에서 불러오기';
     document.querySelector('label[for="riotId"]').textContent='내 챔프폭 불러오기 (롤 클라이언트 계정)';
     idStatus('롤 클라이언트에 로그인하면 최근 전적과 숙련도로 자동으로 채워요.');
+    $('keyForm').hidden=false;refreshKey();
     return;
   }
   $('idBtn').disabled=!POOL_API;
   if(!POOL_API)idStatus('챔프폭 불러오기 서버가 아직 연결되지 않았어요. 아래 칸에 직접 적어도 돼요.');
   const saved=store.get('pr.riotId');if(saved)$('riotId').value=saved;
 }
+// ---- Riot API 키 (도우미에만 저장)
+function syncText(sy){
+  if(!sy)return '';
+  if(sy.state==='syncing')return `전적 받는 중 ${sy.done}/${sy.total}판 (처음엔 몇 분 걸려요, 받은 만큼 바로 반영)`;
+  if(sy.state==='done')return `Riot 기록 ${sy.total}판 받음`;
+  if(sy.state==='badkey')return '키가 만료됐거나 거절됐어요. 새 키를 넣어주세요.';
+  if(sy.state==='error')return `전적을 받다가 문제가 생겼어요: ${sy.error||''}`;
+  return '연결됨';
+}
+async function refreshKey(){
+  try{const j=await (await fetch('/config',{cache:'no-store'})).json();
+    $('keyCtl').hidden=j.hasKey;$('keyOn').hidden=!j.hasKey;$('keyNote').hidden=j.hasKey;
+    $('keyState').textContent=j.hasKey?`API 키 연결됨 · ${syncText(j.sync)}`:'';
+    return j;
+  }catch(e){return null;}
+}
+async function postKey(key){
+  $('keyBtn').disabled=true;$('keyMsg').textContent=key?'키를 확인하는 중이에요.':'';$('keyMsg').classList.remove('risk');
+  try{
+    const r=await fetch('/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({riotApiKey:key})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(j.error||'저장하지 못했어요.');
+    $('keyIn').value='';$('keyMsg').textContent=key?'저장했어요. 전적을 받기 시작해요.':'키를 지웠어요.';
+    await refreshKey();if(key)fetchPool();
+  }catch(e){$('keyMsg').textContent=e.message;$('keyMsg').classList.add('risk');}
+  finally{$('keyBtn').disabled=false;}
+}
+$('keyForm').addEventListener('submit',ev=>{ev.preventDefault();const k=$('keyIn').value.trim();if(k)postKey(k);});
+$('keyDel').addEventListener('click',()=>postKey(''));
+let SYNC_TIMER=null;
+
 function applyPool(j){
   // 포지션 정보가 없는 경기는 챔피언이 주로 가는 라인으로 넣음
   let guessed=0;
@@ -829,12 +868,25 @@ function applyPool(j){
   const top=(j.positions&&j.mainPosition&&j.positions[j.mainPosition]||[]).slice(0,3).map(x=>`${x.name} ${x.games}판`).join(', ');
   const more=j.pending?(j.stored?` · 다시 불러오면 ${Math.min(j.pending,30)}판 더 확인해요`:' · 서버 누적 저장이 꺼져 있어 최근 30판만 봐요'):'';
   let kind='최근 랭크',detail='';
+  if(j.source==='api'){
+    kind='Riot 기록 일반·랭크';
+    const sk=j.skipped||{},ex=[];
+    if(sk.mode)ex.push(`칼바람·아레나 등 ${sk.mode}판`);
+    if(sk.short)ex.push(`다시하기·15분 미만 ${sk.short}판`);
+    detail=` · 내 경기 ${j.checkedGames}판 중 ${j.totalGames}판 사용 (랭크 ${j.rankedGames||0}판)${ex.length?' · 제외: '+ex.join(', '):''}`;
+  }
+  if(j.sync){
+    detail+=` · ${syncText(j.sync)}`;
+    $('keyState').textContent=`API 키 연결됨 · ${syncText(j.sync)}`;
+    clearTimeout(SYNC_TIMER);
+    if(j.sync.state==='syncing')SYNC_TIMER=setTimeout(fetchPool,15000); // 받는 동안 15초마다 갱신
+  }
   if(j.source==='client'){
     kind='최근 일반·랭크';
     const sk=j.skipped||{},ex=[];
     if(sk.mode)ex.push(`칼바람·아레나 등 ${sk.mode}판`);
-    if(sk.short)ex.push(`15분 미만 ${sk.short}판`);
-    detail=` · 클라이언트 전적 ${j.checkedGames||j.totalGames}판 중 ${j.totalGames}판 사용 (랭크 ${j.rankedGames||0}판${guessed?`, 포지션 추정 ${guessed}판`:''})${ex.length?' · 제외: '+ex.join(', '):''}`;
+    if(sk.short)ex.push(`다시하기·15분 미만 ${sk.short}판`);
+    detail+=` · 클라이언트 전적 ${j.checkedGames||j.totalGames}판 중 ${j.totalGames}판 사용 (랭크 ${j.rankedGames||0}판${guessed?`, 포지션 추정 ${guessed}판`:''})${ex.length?' · 제외: '+ex.join(', '):''}`;
   }
   idStatus(lanesFound.length?`${j.riotId} · ${kind} ${j.totalGames}판 기준 · 주 포지션 ${j.mainPosition}${top?' ('+top+')':''}${more}${detail}`:`${j.riotId} · ${kind} 경기가 없어 챔프폭을 채우지 못했어요.${detail}`);
 }

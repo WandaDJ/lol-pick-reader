@@ -10,6 +10,8 @@ http://127.0.0.1:27150/ 에 픽창 판독기 페이지를 띄우고 자동으로
 - 읽지 않는 정보: 아군·상대의 닉네임, 계정 ID 등 개인 정보 (Riot 정책상 금지)
 - 모든 통신은 내 PC 안(127.0.0.1)에서만 이뤄지고, 외부로는 GitHub Pages에서
   페이지와 도우미 최신본을 받아올 때만 접속해요.
+- Riot API 키(선택): 넣으면 내 계정 전적을 Riot 공식 기록에서 최근 300판까지 받아요.
+  키는 이 PC의 ~/.lol-pick-reader/config.json 에만 저장되고, Riot 서버에만 보내요.
 - 자동 업데이트: 켤 때 도우미 코드 최신본을 확인해 새 버전이면 그걸로 실행하고,
   켜져 있는 동안 10분마다 페이지 최신본을 받아요.
 
@@ -19,6 +21,7 @@ http://127.0.0.1:27150/ 에 픽창 판독기 페이지를 띄우고 자동으로
 from __future__ import annotations
 
 import base64
+import collections
 import json
 import os
 import platform
@@ -35,7 +38,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.3.1"
+VERSION = "1.4.0"
 PORT = int(os.environ.get("PICK_HELPER_PORT", "27150"))
 SITE = os.environ.get("PICK_HELPER_SITE", "https://wandadj.github.io/lol-pick-reader/")
 SITE_FILES = ["index.html", "data/stats.json", "data/config.json"]
@@ -320,11 +323,182 @@ def parse_pool(summoner: dict, games: list[dict], mastery: list[dict], names: di
     }
 
 
+# ---------------------------------------------------------------- Riot API로 내 전적 더 받기 (선택)
+RIOT_HOST = os.environ.get("PICK_HELPER_RIOT_HOST", "https://asia.api.riotgames.com")
+KEEP_MATCHES = 300
+TEAM_POS = {"TOP": "TOP", "JUNGLE": "JGL", "MIDDLE": "MID", "BOTTOM": "ADC", "UTILITY": "SUP"}
+KEY_RE = re.compile(r"^RGAPI-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+def config_path() -> Path:
+    return cache_dir().parent / "config.json"
+
+
+def load_config() -> dict:
+    try:
+        return json.loads(config_path().read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def save_config(cfg: dict):
+    p = config_path()
+    p.write_text(json.dumps(cfg), encoding="utf-8")
+    try:
+        os.chmod(p, 0o600)  # 내 계정만 읽을 수 있게
+    except OSError:
+        pass
+
+
+class BadKey(Exception):
+    pass
+
+
+class RiotSync:
+    """내 계정(puuid)의 경기만 받아서 이 PC에 저장. 요청 한도(1초 20회, 2분 100회)를 지킴."""
+
+    def __init__(self):
+        self.status: dict = {"state": "off"}
+        self.thread: threading.Thread | None = None
+        self.calls: collections.deque = collections.deque()
+        self.lock = threading.Lock()
+
+    def path(self, puuid: str) -> Path:
+        return cache_dir().parent / f"matches-{puuid[:16]}.json"
+
+    def records(self, puuid: str) -> dict:
+        with self.lock:
+            try:
+                return json.loads(self.path(puuid).read_text(encoding="utf-8"))
+            except Exception:
+                return {}
+
+    def _save(self, puuid: str, recs: dict):
+        with self.lock:
+            self.path(puuid).write_text(json.dumps(recs, ensure_ascii=False), encoding="utf-8")
+
+    def _wait(self):
+        while True:
+            now = time.monotonic()
+            while self.calls and now - self.calls[0] > 120:
+                self.calls.popleft()
+            recent = [t for t in self.calls if now - t < 1]
+            wait = 0.0
+            if len(recent) >= 18:
+                wait = 1 - (now - recent[0]) + 0.05
+            if len(self.calls) >= 95:
+                wait = max(wait, 120 - (now - self.calls[0]) + 0.5)
+            if wait <= 0:
+                self.calls.append(now)
+                return
+            time.sleep(wait)
+
+    def get(self, key: str, path: str):
+        for attempt in range(6):
+            self._wait()
+            req = urllib.request.Request(RIOT_HOST + path, headers={"X-Riot-Token": key, "User-Agent": "lol-pick-reader-helper"})
+            try:
+                with urllib.request.urlopen(req, context=https_context(), timeout=15) as r:
+                    return json.loads(r.read().decode("utf-8"))
+            except urllib.error.HTTPError as e:
+                if e.code == 429:
+                    time.sleep(int(e.headers.get("Retry-After", "10")) + 1)
+                    continue
+                if e.code in (401, 403):
+                    raise BadKey()
+                if e.code == 404:
+                    return None
+                time.sleep(2 ** attempt)
+            except (urllib.error.URLError, TimeoutError, OSError):
+                time.sleep(2 ** attempt)
+        return None
+
+    def check_key(self, key: str, puuid: str) -> bool:
+        try:
+            return bool(self.get(key, f"/riot/account/v1/accounts/by-puuid/{puuid}"))
+        except BadKey:
+            return False
+
+    def start(self, key: str, puuid: str, names: dict):
+        if self.thread and self.thread.is_alive():
+            return
+        if self.status.get("state") == "done" and time.time() - self.status.get("at", 0) < 600:
+            return  # 10분 안에 다시 동기화하지 않음
+        self.thread = threading.Thread(target=self._run, args=(key, puuid, names), daemon=True)
+        self.thread.start()
+
+    def _run(self, key: str, puuid: str, names: dict):
+        try:
+            recs = self.records(puuid)
+            ids: list[str] = []
+            for start in range(0, KEEP_MATCHES, 100):
+                got = self.get(key, f"/lol/match/v5/matches/by-puuid/{puuid}/ids?start={start}&count=100") or []
+                ids += got
+                if len(got) < 100:
+                    break
+            todo = [m for m in ids if m not in recs]
+            done = len(ids) - len(todo)
+            self.status = {"state": "syncing", "total": len(ids), "done": done}
+            for i, mid in enumerate(todo, 1):
+                m = self.get(key, f"/lol/match/v5/matches/{mid}")
+                info = (m or {}).get("info") or {}
+                me = next((p for p in info.get("participants") or [] if p.get("puuid") == puuid), None)
+                recs[mid] = {"q": info.get("queueId"), "d": info.get("gameDuration") or 0, "t": info.get("gameCreation") or 0,
+                             "lane": TEAM_POS.get((me or {}).get("teamPosition") or ""),
+                             "c": names.get((me or {}).get("championId") or 0) or (me or {}).get("championName"),
+                             "w": bool((me or {}).get("win"))} if me else {"q": None}
+                self.status = {"state": "syncing", "total": len(ids), "done": done + i}
+                if i % 10 == 0:
+                    self._save(puuid, recs)
+            keep = set(ids)
+            recs = {k: v for k, v in recs.items() if k in keep}
+            self._save(puuid, recs)
+            self.status = {"state": "done", "total": len(ids), "done": len(ids), "at": time.time()}
+        except BadKey:
+            self.status = {"state": "badkey"}
+        except Exception as e:
+            self.status = {"state": "error", "error": str(e)[:200]}
+
+
+SYNC = RiotSync()
+
+
+def pool_from_records(summoner: dict, recs: dict, mastery: list[dict], names: dict[int, str]) -> dict:
+    """Riot API 기록을 클라이언트 전적과 같은 형식으로 바꿔서 parse_pool로 집계."""
+    games = []
+    for i, (mid, r) in enumerate(sorted(recs.items(), key=lambda kv: -(kv[1].get("t") or 0))):
+        if not r.get("c"):
+            continue
+        lane = {"TOP": ("TOP", "SOLO"), "JGL": ("JUNGLE", "NONE"), "MID": ("MIDDLE", "SOLO"),
+                "ADC": ("BOTTOM", "DUO_CARRY"), "SUP": ("BOTTOM", "DUO_SUPPORT")}.get(r.get("lane"), ("NONE", "NONE"))
+        cid = next((k for k, v in names.items() if v == r["c"]), 0)
+        games.append({"gameId": mid, "queueId": r.get("q"), "gameDuration": r.get("d") or 0,
+                      "participants": [{"championId": cid, "stats": {"win": r.get("w")},
+                                        "timeline": {"lane": lane[0], "role": lane[1]}}]})
+    out = parse_pool(summoner, games, mastery, names)
+    out["source"] = "api"
+    return out
+
+
 def load_pool(lcu: LCU) -> dict:
     names = lcu.champion_names()
     summoner = lcu.get("/lol-summoner/v1/current-summoner") or {}
     if not summoner.get("puuid"):
         raise NotRunning()
+    key = load_config().get("riotApiKey")
+    if key:
+        SYNC.start(key, summoner["puuid"], names)
+        recs = SYNC.records(summoner["puuid"])
+        if len(recs) >= 5 or SYNC.status.get("state") == "done":
+            try:
+                mastery = lcu.get("/lol-champion-mastery/v1/local-player/champion-mastery") or []
+            except NotRunning:
+                raise
+            except Exception:
+                mastery = []
+            out = pool_from_records(summoner, recs, mastery, names)
+            out["sync"] = dict(SYNC.status)
+            return out
     games: list[dict] = []
     ids = set()
     beg = 0
@@ -349,7 +523,10 @@ def load_pool(lcu: LCU) -> dict:
         raise
     except Exception:
         mastery = []
-    return parse_pool(summoner, games, mastery, names)
+    out = parse_pool(summoner, games, mastery, names)
+    if key:
+        out["sync"] = dict(SYNC.status)
+    return out
 
 
 # ---------------------------------------------------------------- 상태 갱신
@@ -477,6 +654,55 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Private-Network", "true")
 
+    def send_json(self, status: int, obj: dict):
+        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.cors()
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        # 키 설정은 도우미가 띄운 페이지에서만 (다른 사이트가 몰래 바꾸지 못하게)
+        if self.headers.get("Origin") not in (f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}"):
+            self.send_json(403, {"error": "허용되지 않은 요청이에요."})
+            return
+        if self.path.split("?")[0] != "/config":
+            self.send_json(404, {"error": "없는 주소예요."})
+            return
+        try:
+            data = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 4096)) or b"{}")
+        except Exception:
+            self.send_json(400, {"error": "요청 형식이 잘못됐어요."})
+            return
+        cfg = load_config()
+        key = str(data.get("riotApiKey") or "").strip()
+        if not key:
+            cfg.pop("riotApiKey", None)
+            save_config(cfg)
+            SYNC.status = {"state": "off"}
+            self.send_json(200, {"hasKey": False})
+            return
+        if not KEY_RE.match(key):
+            self.send_json(400, {"error": "키 형식이 아니에요. RGAPI-로 시작하는 키를 그대로 붙여넣으세요."})
+            return
+        try:
+            puuid = ((LCU_CLIENT or LCU()).get("/lol-summoner/v1/current-summoner") or {}).get("puuid")
+        except NotRunning:
+            puuid = None
+        if not puuid:
+            self.send_json(503, {"error": "롤 클라이언트에 로그인한 뒤 다시 시도하세요. (키 확인에 내 계정이 필요해요)"})
+            return
+        if not SYNC.check_key(key, puuid):
+            self.send_json(400, {"error": "Riot이 이 키를 거절했어요. 만료됐거나 잘못 복사한 키인지 확인하세요."})
+            return
+        cfg["riotApiKey"] = key
+        save_config(cfg)
+        SYNC.status = {"state": "off"}
+        self.send_json(200, {"hasKey": True})
+
     def do_OPTIONS(self):
         self.send_response(204)
         self.cors()
@@ -502,6 +728,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+            return
+        if path == "config":
+            self.send_json(200, {"hasKey": bool(load_config().get("riotApiKey")), "sync": dict(SYNC.status)})
             return
         if path == "state":
             with LOCK:
