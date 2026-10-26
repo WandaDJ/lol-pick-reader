@@ -128,6 +128,7 @@ details.fold[open] .ssum{display:none}
 .rank .x{grid-column:4;justify-self:end;font-size:11px;padding:1px 6px;color:var(--muted)}
 .rank .why{grid-column:2/4}
 .risk{color:var(--enemy)}
+.tip-c{color:var(--muted);font-size:13px}
 .proftoggle{display:flex;gap:10px;align-items:flex-start;cursor:pointer;font-size:14px}
 .proftoggle input{width:auto;margin-top:4px;accent-color:var(--brass)}
 .noprof .row select{display:none}
@@ -303,7 +304,7 @@ const PH=["0~10분","10~20분","20~30분","30분 이후"];
 const $=id=>document.getElementById(id);
 const norm=s=>s.replace(/\s+/g,'').toLowerCase();
 // 페이지를 고칠 때마다 올리는 버전 (날짜.번호)
-const PAGE_VERSION='2026.10.27.9';
+const PAGE_VERSION='2026.10.27.10';
 let HELPER_VER=null;
 function updateVer(){
   const el=document.getElementById('verLine');if(!el)return;
@@ -552,6 +553,20 @@ function rolePlan(an,ap,en,r){
     p.push(`20분 이후: 시간이 갈수록 불리해져요.${myLateWeak?` ${me}도 후반이 약해서`:''} 25분 전에 끝내야 해요. 오브젝트를 묶어서 포탑을 밀고, 상대가 성장하기 전에 한타를 거세요.${kind==='catch'&&targets?` 끊을 대상은 ${jo(targets,'이에요','예요')}.`:''}`);
   }else{
     p.push(`20분 이후: 팽팽한 구간이에요. ${kind==='catch'?`정면 한타보다 시야 밖 캐치로 숫자 우위를 먼저 만드세요.${targets?` 노릴 대상은 ${jo(targets,'이에요','예요')}.`:''}`:kind==='engage'?'이니시 타이밍이 승부를 가려요. 상대 핵심 스킬이 빠졌을 때 여세요.':'한 번의 한타가 승부를 가르니 무리한 사이드 운영은 피하세요.'}`);
+  }
+  // 챔피언별 문장 (data/champ-notes.json)
+  if(NOTES){
+    const tag=c=>NOTES.review&&NOTES.review.includes(c)?' <span class="note">(검토 필요)</span>':'';
+    const phases=['early','mid','late'];
+    p.forEach((t,i)=>{const n=note(me,phases[i]);if(n)p[i]=`${t}<br><span class="tip-c">${me}: ${n}</span>`;});
+    const sp=note(me,'spike');
+    if(sp)p.unshift(`강해지는 시점: ${sp}${tag(me)}`);
+    if(myLane&&!myLane.missing){
+      if(myLane.avg>=56&&note(me,'ahead'))p.push(`라인이 유리할 때: ${note(me,'ahead')}`);
+      else if(myLane.avg<=44&&note(me,'behind'))p.push(`라인이 불리할 때: ${note(me,'behind')}`);
+    }
+    const foes=(MY===3||MY===4)?[en[3],en[4]]:[en[MY]];
+    for(const f of foes.filter(Boolean)){const a=note(f,'against');if(a)p.push(`상대 ${f} 주의: ${a}${tag(f)}`);}
   }
   return p;
 }
@@ -856,6 +871,25 @@ async function loadRoster(){
   }catch(e){}
 }
 loadRoster();
+// ---- 챔피언별 상황 문장: 브라우저에 저장해두고, 서버 버전이 바뀌면 새로 받음
+let NOTES=null;
+function setNotes(n){if(n&&n.champions&&n.fields){NOTES=n;NOTES.idx=Object.fromEntries(n.fields.map((f,i)=>[f,i]));NOTES.norm={};for(const k of Object.keys(n.champions))NOTES.norm[norm(k)]=k;return true;}return false;}
+function note(c,field){
+  if(!NOTES||!c)return '';
+  const k=NOTES.champions[c]?c:NOTES.norm[norm(c)];
+  const row=k&&NOTES.champions[k];
+  return row?row[NOTES.idx[field]]||'':'';
+}
+async function loadNotes(){
+  try{const cached=JSON.parse(store.get('pr.notes')||'null');if(setNotes(cached))render();}catch(e){}
+  try{
+    const r=await fetch('data/champ-notes.json',{cache:'no-cache'});
+    if(!r.ok)return;
+    const n=await r.json();
+    if(!NOTES||n.version!==NOTES.version){setNotes(n);store.set('pr.notes',JSON.stringify(n));render();}
+  }catch(e){}
+}
+loadNotes();
 
 // ---- 아이디로 챔프폭 불러오기 (Cloudflare Worker 중계)
 let POOL_API='';

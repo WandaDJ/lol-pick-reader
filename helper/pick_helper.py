@@ -38,10 +38,10 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.5.0"
+VERSION = "1.5.1"
 PORT = int(os.environ.get("PICK_HELPER_PORT", "27150"))
 SITE = os.environ.get("PICK_HELPER_SITE", "https://wandadj.github.io/lol-pick-reader/")
-SITE_FILES = ["index.html", "data/stats.json", "data/config.json"]
+SITE_FILES = ["index.html", "data/stats.json", "data/config.json", "data/champ-notes.json"]
 LANE = {"top": "TOP", "jungle": "JGL", "middle": "MID", "bottom": "ADC", "utility": "SUP"}
 ALLOWED_ORIGINS = {"https://wandadj.github.io", f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}"}
 
