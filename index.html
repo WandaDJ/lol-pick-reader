@@ -655,12 +655,13 @@ function inferLanes(list,occ){
 
 // ---- PC 도우미 연결 (도우미가 띄운 http://127.0.0.1:27150 에서만 동작)
 const LOCAL=/^(127\.0\.0\.1|localhost)$/.test(location.hostname)&&location.port==='27150';
-let AUTO=true,lastAuto={},liveSig='';
+let AUTO=true,lastAuto={},liveSig='',POOL_OK=false,POOL_TRY=0;
 function showLive(text,kind){$('live').hidden=false;$('liveText').textContent=text;$('live').dataset.kind=kind;}
 function ensureChamp(name){if(!name)return '';const k=find(name);if(k)return k;D[name]=[3,3,3,3,''];fillNames();return name;}
 function setAuto(id,val){val=val||'';if(lastAuto[id]!==val){$(id).value=val;lastAuto[id]=val;}}
 function applyHelper(st){
   if(st.client!=='connected'){showLive(st.client==='error'?'클라이언트 응답을 읽지 못했어요. 도우미를 다시 켜보세요.':'롤 클라이언트를 기다리는 중이에요. 클라이언트를 켜면 자동으로 연결돼요.','wait');return;}
+  if(!POOL_OK&&Date.now()-POOL_TRY>30000){POOL_TRY=Date.now();fetchPool().then(ok=>{POOL_OK=!!ok;});}
   if(!st.inChampSelect){showLive('클라이언트 연결됨 · 픽창이 시작되면 자동으로 채워요.','ok');if(liveSig){liveSig='';lastAuto={};helperBans=[];render();}return;}
   const turn=st.myTurn==='pick'?' · 내 차례: 픽':st.myTurn==='ban'?' · 내 차례: 밴':'';
   showLive(`픽창 자동 입력 중 · 아군 ${st.allies.filter(a=>a.locked).length}명 확정 · 상대 ${st.enemies.length}명 공개${turn}`,'ok');
@@ -745,48 +746,65 @@ function poolDetail(){try{return JSON.parse(store.get('pr.detail.'+LANES[MY])||'
 function idStatus(t,err){$('idStatus').textContent=t;$('idStatus').classList.toggle('err',!!err);}
 async function loadConfig(){
   try{const r=await fetch('data/config.json',{cache:'no-cache'});if(r.ok){POOL_API=String((await r.json()).poolApi||'').replace(/\/$/,'');}}catch(e){}
+  if(LOCAL){ // PC 도우미: 클라이언트에 로그인한 계정 전적으로 (키·아이디 필요 없음)
+    $('riotId').hidden=true;$('idBtn').disabled=false;$('idBtn').textContent='내 계정에서 불러오기';
+    document.querySelector('label[for="riotId"]').textContent='내 챔프폭 불러오기 (롤 클라이언트 계정)';
+    idStatus('롤 클라이언트에 로그인하면 최근 전적과 숙련도로 자동으로 채워요.');
+    return;
+  }
   $('idBtn').disabled=!POOL_API;
   if(!POOL_API)idStatus('챔프폭 불러오기 서버가 아직 연결되지 않았어요. 아래 칸에 직접 적어도 돼요.');
   const saved=store.get('pr.riotId');if(saved)$('riotId').value=saved;
 }
-$('idForm').addEventListener('submit',async ev=>{
-  ev.preventDefault();
-  const id=$('riotId').value.trim();
-  if(!/^.+#.+$/.test(id)){idStatus("'이름#태그' 형식으로 입력하세요.",true);return;}
-  if(!POOL_API)return;
-  $('idBtn').disabled=true;idStatus('최근 랭크 경기를 확인하는 중이에요. 처음엔 10~20초 걸려요.');
+function applyPool(j){
+  const lanesFound=[];
+  const mast={};for(const m of (j.mastery||[])){const k=find(m.name);if(k)mast[k]=m.points;}
+  for(const ln of LANES){
+    const played=(j.positions&&j.positions[ln])||[];
+    const laneGames=(j.positionGames&&j.positionGames[ln])||played.reduce((s,x)=>s+x.games,0);
+    const cand={};
+    for(const row of played){const k=find(row.name)||row.name;const c=cand[k]||(cand[k]={games:0,wins:0,mastery:mast[k]||0});c.games+=row.games;c.wins+=row.wins;}
+    // 이 포지션을 꾸준히 하면 숙련도 높은 포지션 챔피언도 챔프폭에 포함 (최근엔 안 했어도)
+    if(laneGames>=5||ln===j.mainPosition)for(const [k,pts] of Object.entries(mast))if(R[ln].includes(k)&&pts>=50000&&!cand[k])cand[k]={games:0,wins:0,mastery:pts};
+    // 선정: 2판 이상, 1판이어도 숙련도 3만 점 이상, 또는 숙련도로 추가된 챔피언
+    const picked=Object.entries(cand)
+      .filter(([k,d])=>d.games>=2||(d.games===1&&d.mastery>=30000)||d.games===0)
+      .sort((a,b)=>(b[1].games+b[1].mastery/100000*3)-(a[1].games+a[1].mastery/100000*3))
+      .slice(0,8);
+    if(!picked.length)continue;
+    lanesFound.push(`${ln} ${laneGames}판`);
+    store.set('pr.pool.'+ln,picked.map(x=>x[0]).join(', '));
+    store.set('pr.detail.'+ln,JSON.stringify(Object.fromEntries(picked)));
+  }
+  // 픽창 중이면 클라이언트가 정한 포지션을 유지
+  if(j.mainPosition&&!liveSig){MY=LANES.indexOf(j.mainPosition);}
+  applyPos();ONLY_POOL=true;applyFilter();render();
+  const top=(j.positions&&j.mainPosition&&j.positions[j.mainPosition]||[]).slice(0,3).map(x=>`${x.name} ${x.games}판`).join(', ');
+  const more=j.pending?(j.stored?` · 다시 불러오면 ${Math.min(j.pending,30)}판 더 확인해요`:' · 서버 누적 저장이 꺼져 있어 최근 30판만 봐요'):'';
+  const kind=j.source==='client'?'최근 일반·랭크':'최근 랭크';
+  idStatus(lanesFound.length?`${j.riotId} · ${kind} ${j.totalGames}판 기준 · 주 포지션 ${j.mainPosition}${top?' ('+top+')':''}${more}`:`${j.riotId} · ${kind} 경기가 없어 챔프폭을 채우지 못했어요.`);
+}
+async function fetchPool(){
+  let url;
+  if(LOCAL){url='/pool';}
+  else{
+    const id=$('riotId').value.trim();
+    if(!/^.+#.+$/.test(id)){idStatus("'이름#태그' 형식으로 입력하세요.",true);return;}
+    if(!POOL_API)return;
+    store.set('pr.riotId',id);
+    url=`${POOL_API}/pool?riotId=${encodeURIComponent(id)}`;
+  }
+  $('idBtn').disabled=true;idStatus(LOCAL?'클라이언트에서 최근 전적을 읽는 중이에요.':'최근 랭크 경기를 확인하는 중이에요. 처음엔 10~20초 걸려요.');
   try{
-    const r=await fetch(`${POOL_API}/pool?riotId=${encodeURIComponent(id)}`);
+    const r=await fetch(url,{cache:'no-store'});
     const j=await r.json().catch(()=>({}));
     if(!r.ok)throw new Error(j.error||`불러오지 못했어요 (${r.status})`);
-    store.set('pr.riotId',id);
-    const lanesFound=[];
-    const mast={};for(const m of (j.mastery||[])){const k=find(m.name);if(k)mast[k]=m.points;}
-    for(const ln of LANES){
-      const played=(j.positions&&j.positions[ln])||[];
-      const laneGames=(j.positionGames&&j.positionGames[ln])||played.reduce((s,x)=>s+x.games,0);
-      const cand={};
-      for(const row of played){const k=find(row.name)||row.name;const c=cand[k]||(cand[k]={games:0,wins:0,mastery:mast[k]||0});c.games+=row.games;c.wins+=row.wins;}
-      // 이 포지션을 꾸준히 하면 숙련도 높은 포지션 챔피언도 챔프폭에 포함 (최근엔 안 했어도)
-      if(laneGames>=5||ln===j.mainPosition)for(const [k,pts] of Object.entries(mast))if(R[ln].includes(k)&&pts>=50000&&!cand[k])cand[k]={games:0,wins:0,mastery:pts};
-      // 선정: 2판 이상, 1판이어도 숙련도 3만 점 이상, 또는 숙련도로 추가된 챔피언
-      const picked=Object.entries(cand)
-        .filter(([k,d])=>d.games>=2||(d.games===1&&d.mastery>=30000)||d.games===0)
-        .sort((a,b)=>(b[1].games+b[1].mastery/100000*3)-(a[1].games+a[1].mastery/100000*3))
-        .slice(0,8);
-      if(!picked.length)continue;
-      lanesFound.push(`${ln} ${laneGames}판`);
-      store.set('pr.pool.'+ln,picked.map(x=>x[0]).join(', '));
-      store.set('pr.detail.'+ln,JSON.stringify(Object.fromEntries(picked)));
-    }
-    if(j.mainPosition){MY=LANES.indexOf(j.mainPosition);}
-    applyPos();ONLY_POOL=true;applyFilter();render();
-    const top=(j.positions&&j.mainPosition&&j.positions[j.mainPosition]||[]).slice(0,3).map(x=>`${x.name} ${x.games}판`).join(', ');
-    const more=j.pending?(j.stored?` · 다시 불러오면 ${Math.min(j.pending,30)}판 더 확인해요`:' · 서버 누적 저장이 꺼져 있어 최근 30판만 봐요'):'';
-    idStatus(lanesFound.length?`${j.riotId} · 최근 랭크 ${j.totalGames}판 기준 · 주 포지션 ${j.mainPosition}${top?' ('+top+')':''}${more}`:`${j.riotId} · 최근 랭크 경기가 없어 챔프폭을 채우지 못했어요.`);
-  }catch(e){idStatus(e.message||'불러오지 못했어요.',true);}
-  finally{$('idBtn').disabled=!POOL_API;}
-});
+    applyPool(j);
+    return true;
+  }catch(e){idStatus(e.message||'불러오지 못했어요.',true);return false;}
+  finally{$('idBtn').disabled=LOCAL?false:!POOL_API;}
+}
+$('idForm').addEventListener('submit',ev=>{ev.preventDefault();fetchPool();});
 loadConfig();
 </script>
 </body>

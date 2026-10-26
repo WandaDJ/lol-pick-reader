@@ -19,6 +19,8 @@
 
 **자동으로 채워지는 것:** 내 포지션, 아군 픽(확정·고민 중), 공개된 상대 픽(포지션은 챔피언으로 추정), 양 팀 밴, 지금 내 차례인지
 
+**내 챔프폭:** 클라이언트에 로그인한 계정의 최근 일반·랭크 100판과 챔피언 숙련도로 포지션별 챔프폭을 자동으로 채워요. Riot API 키가 필요 없어서 누구나 쓸 수 있어요.
+
 **가져오지 않는 것:** 아군·상대의 닉네임, 계정 정보. 솔로 랭크에서 가려진 닉네임을 드러내는 건 Riot 정책 위반이라 도우미는 챔피언·포지션·밴 정보만 써요.
 
 ### 설치
@@ -97,6 +99,7 @@ git add data/stats.json && git commit -m "통계 갱신" && git push
 3. Worker의 **Settings → Variables and Secrets**에서 추가
    - `RIOT_API_KEY` : 종류 **Secret**, 값은 Riot API 키
    - `ALLOWED_ORIGIN` : 종류 **Text**, 값 `https://wandadj.github.io`
+   - `ALLOWED_RIOT_IDS` : 종류 **Text**, 조회를 허용할 아이디를 쉼표로 (예: `동재#KR1, 친구#KR1`)
 4. **KV 저장소 연결 (권장)**: 왼쪽 메뉴 **Storage & Databases → KV → Create**로 `lol-pick-reader-pool`을 만들고, Worker의 **Settings → Bindings → Add → KV namespace**에서 변수 이름 `POOL_KV`로 연결
 5. Worker 주소(`https://lol-pick-reader.<계정>.workers.dev`)를 `data/config.json`의 `poolApi`에 넣고 커밋
 
@@ -110,6 +113,11 @@ cd worker
 npx wrangler deploy
 npx wrangler secret put RIOT_API_KEY
 ```
+
+### Personal Key로 쓸 때
+Riot 정책상 **Personal API Key는 나 혼자나 작은 지인 모임용**이에요. 누구나 아무 아이디나 조회할 수 있게 열어두면 공개 서비스가 되어 Production Key가 필요해요. 그래서 `ALLOWED_RIOT_IDS`에 나와 지인 아이디만 넣어두세요. 등록되지 않은 아이디는 Riot API를 호출하기 전에 거절해요. Production Key를 받으면 `ALLOWED_RIOT_IDS`를 지우면 누구나 쓸 수 있어요.
+
+PC 도우미를 쓰는 사람은 이 서버 없이도 자기 클라이언트에서 챔프폭을 불러올 수 있어요.
 
 ### 챔프폭은 어떻게 고르나요
 - 한 번 불러올 때 **새로 한 경기만 최대 30판** 받아요 (Cloudflare 무료 플랜의 요청당 외부 호출 50회 한도 안).

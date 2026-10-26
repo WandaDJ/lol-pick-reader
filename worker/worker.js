@@ -13,6 +13,9 @@
  * 설정 (Cloudflare 대시보드 → Worker → Settings)
  *   RIOT_API_KEY    (Secret)      Riot API 키
  *   ALLOWED_ORIGIN  (Text)        https://wandadj.github.io   여러 개면 쉼표로 구분
+ *   ALLOWED_RIOT_IDS (Text)       조회를 허용할 아이디 목록, 쉼표로 구분 (예: 동재#KR1, 친구#KR1)
+ *                                  Personal API Key는 개인·지인용이라 이 값을 꼭 넣으세요.
+ *                                  비우면 누구나 조회 가능 (Production Key를 받은 뒤에만)
  *   POOL_KV         (KV 바인딩)    선택. 연결하면 아이디별 경기를 최대 100판까지 쌓아둬요.
  *                                  없으면 매번 최근 30판만 봐요.
  *
@@ -105,9 +108,17 @@ function myRecord(match, puuid, names) {
   };
 }
 
+const idKey = (s) => String(s || "").replace(/\s+/g, "").toLowerCase();
+
+export function isAllowed(env, id) {
+  const list = String(env.ALLOWED_RIOT_IDS || "").split(",").map(idKey).filter(Boolean);
+  return !list.length || list.includes(idKey(`${id.name}#${id.tag}`));
+}
+
 export async function buildPool(env, riotId) {
   const id = parseRiotId(riotId);
   if (!id) throw new HttpError(400, "아이디는 '이름#태그' 형식으로 입력하세요. 예: Hide on bush#KR1");
+  if (!isAllowed(env, id)) throw new HttpError(403, "이 서버는 등록된 아이디만 조회할 수 있어요. 서버 관리자에게 아이디 등록을 요청하세요.");
 
   const account = await riot(env, REGION,
     `/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(id.name)}/${encodeURIComponent(id.tag)}`);

@@ -81,7 +81,16 @@ assert.equal(b2.totalGames, 29);
 assert.equal(b2.pending, 45);
 assert.equal(b2.stored, false);
 
-// 3) 오류와 CORS
+// 3) 등록한 아이디만 허용 (Personal Key용)
+const envLimited = { ...envNoKV, ALLOWED_RIOT_IDS: "다른사람#KR1, 동 재#kr1" };
+assert.equal((await call(envLimited, "동재#KR1")).status, 200);   // 공백·대소문자 무시
+calls = 0;
+const denied = await call(envLimited, "모르는사람#KR1");
+assert.equal(denied.status, 403);
+assert.match((await denied.json()).error, /등록된 아이디만/);
+assert.equal(calls, 0, "허용 안 된 아이디는 Riot API를 호출하지 않아야 함");
+
+// 4) 오류와 CORS
 let res = await call(envNoKV, "없는사람#KR1");
 assert.equal(res.status, 404);
 assert.match((await res.json()).error, /찾을 수 없어요/);
@@ -89,4 +98,4 @@ assert.equal((await call(envNoKV, "형식오류")).status, 400);
 res = await call(envNoKV, "동재#KR1", "https://evil.example");
 assert.equal(res.headers.get("Access-Control-Allow-Origin"), null);
 
-console.log("ok: 누적 30→60→75판, KV 없이 30판, 오류·CORS 확인");
+console.log("ok: 누적 30→60→75판, KV 없이 30판, 아이디 제한, 오류·CORS 확인");

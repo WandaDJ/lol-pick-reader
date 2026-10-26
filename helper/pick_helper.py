@@ -5,7 +5,8 @@
 롤 클라이언트가 켜져 있으면 클라이언트의 로컬 API(LCU)에서 픽창 상태를 읽어
 http://127.0.0.1:27150/ 에 픽창 판독기 페이지를 띄우고 자동으로 채워줍니다.
 
-- 읽는 정보: 내 포지션, 양 팀 챔피언(확정·고민 중), 밴, 지금 누구 차례인지
+- 읽는 정보: 내 포지션, 양 팀 챔피언(확정·고민 중), 밴, 지금 누구 차례인지,
+  그리고 로그인한 내 계정의 최근 전적·챔피언 숙련도 (챔프폭 계산용)
 - 읽지 않는 정보: 아군·상대의 닉네임, 계정 ID 등 개인 정보 (Riot 정책상 금지)
 - 모든 통신은 내 PC 안(127.0.0.1)에서만 이뤄지고, 외부로는 페이지 최신본을 받아올 때만 접속해요.
 
@@ -30,7 +31,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 PORT = int(os.environ.get("PICK_HELPER_PORT", "27150"))
 SITE = os.environ.get("PICK_HELPER_SITE", "https://wandadj.github.io/lol-pick-reader/")
 SITE_FILES = ["index.html", "data/stats.json", "data/config.json"]
@@ -230,9 +231,105 @@ def parse_session(sess: dict | None, names: dict[int, str]) -> dict:
     }
 
 
+# ---------------------------------------------------------------- 내 챔프폭 (클라이언트에 로그인한 계정)
+POOL_QUEUES = {400, 420, 440}  # 일반 드래프트, 솔로 랭크, 자유 랭크
+MATCH_LANE = {"TOP": "TOP", "JUNGLE": "JGL", "MIDDLE": "MID", "MID": "MID"}
+
+
+def match_lane(timeline: dict) -> str | None:
+    lane = str(timeline.get("lane") or "").upper()
+    role = str(timeline.get("role") or "").upper()
+    if lane in MATCH_LANE:
+        return MATCH_LANE[lane]
+    if lane in ("BOTTOM", "BOT"):
+        return "SUP" if "SUPPORT" in role else "ADC"
+    return None
+
+
+def parse_pool(summoner: dict, games: list[dict], mastery: list[dict], names: dict[int, str]) -> dict:
+    """클라이언트 전적·숙련도를 중계 서버(/pool)와 같은 모양으로 정리."""
+    puuid = summoner.get("puuid")
+    positions: dict[str, list] = {}
+    pos_games: dict[str, int] = {}
+    total = 0
+    seen = set()
+    for g in games:
+        gid = g.get("gameId")
+        if gid in seen or g.get("queueId") not in POOL_QUEUES or (g.get("gameDuration") or 0) < 15 * 60:
+            continue
+        seen.add(gid)
+        parts = g.get("participants") or []
+        me = parts[0] if len(parts) == 1 else None
+        if me is None:  # 10명 전체가 들어있는 형식이면 내 participantId를 찾음
+            pid = next((x.get("participantId") for x in g.get("participantIdentities") or []
+                        if (x.get("player") or {}).get("puuid") == puuid), None)
+            me = next((x for x in parts if x.get("participantId") == pid), None)
+        if not me:
+            continue
+        lane = match_lane(me.get("timeline") or {})
+        champ = names.get(me.get("championId") or 0)
+        if not lane or not champ:
+            continue
+        total += 1
+        row = next((r for r in positions.setdefault(lane, []) if r["name"] == champ), None)
+        if not row:
+            row = {"name": champ, "games": 0, "wins": 0}
+            positions[lane].append(row)
+        row["games"] += 1
+        row["wins"] += 1 if (me.get("stats") or {}).get("win") else 0
+        pos_games[lane] = pos_games.get(lane, 0) + 1
+    for rows in positions.values():
+        rows.sort(key=lambda r: (-r["games"], -r["wins"]))
+    main = max(pos_games, key=pos_games.get) if pos_games else None
+    top = sorted(mastery or [], key=lambda m: -(m.get("championPoints") or 0))[:40]
+    return {
+        "riotId": f"{summoner.get('gameName', '')}#{summoner.get('tagLine', '')}",
+        "mainPosition": main,
+        "totalGames": total,
+        "pending": 0,
+        "stored": True,
+        "source": "client",
+        "positions": positions,
+        "positionGames": pos_games,
+        "mastery": [{"name": names.get(m.get("championId")), "points": m.get("championPoints") or 0,
+                     "level": m.get("championLevel") or 0} for m in top if names.get(m.get("championId"))],
+    }
+
+
+def load_pool(lcu: LCU) -> dict:
+    names = lcu.champion_names()
+    summoner = lcu.get("/lol-summoner/v1/current-summoner") or {}
+    if not summoner.get("puuid"):
+        raise NotRunning()
+    games: list[dict] = []
+    for beg in range(0, 100, 20):  # 한 번에 20판씩, 최근 100판까지
+        try:
+            data = lcu.get(f"/lol-match-history/v1/products/lol/current-summoner/matches?begIndex={beg}&endIndex={beg + 20}") or {}
+        except NotRunning:
+            raise
+        except Exception:
+            break
+        chunk = ((data.get("games") or {}).get("games")) or []
+        if not chunk:
+            break
+        games += chunk
+        if len(chunk) < 20:
+            break
+    try:
+        mastery = lcu.get("/lol-champion-mastery/v1/local-player/champion-mastery") or []
+    except NotRunning:
+        raise
+    except Exception:
+        mastery = []
+    return parse_pool(summoner, games, mastery, names)
+
+
 # ---------------------------------------------------------------- 상태 갱신
 STATE = {"helper": VERSION, "client": "waiting", "inChampSelect": False, "updated": 0}
 LOCK = threading.Lock()
+
+
+LCU_CLIENT: LCU | None = None
 
 
 def poll_loop(lcu: LCU, interval: float = 1.0):
@@ -304,6 +401,24 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0].lstrip("/") or "index.html"
+        if path == "pool":
+            try:
+                body = json.dumps(load_pool(LCU_CLIENT or LCU()), ensure_ascii=False).encode("utf-8")
+                status = 200
+            except NotRunning:
+                body = json.dumps({"error": "롤 클라이언트에 로그인한 뒤 다시 시도하세요."}, ensure_ascii=False).encode("utf-8")
+                status = 503
+            except Exception as e:
+                body = json.dumps({"error": f"클라이언트 전적을 읽지 못했어요: {e}"}, ensure_ascii=False).encode("utf-8")
+                status = 500
+            self.send_response(status)
+            self.cors()
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if path == "state":
             with LOCK:
                 body = json.dumps(STATE, ensure_ascii=False).encode("utf-8")
@@ -340,7 +455,9 @@ def main():
         return
     if not os.environ.get("PICK_HELPER_NO_UPDATE"):
         refresh_site()
-    threading.Thread(target=poll_loop, args=(LCU(),), daemon=True).start()
+    global LCU_CLIENT
+    LCU_CLIENT = LCU()
+    threading.Thread(target=poll_loop, args=(LCU_CLIENT,), daemon=True).start()
     print(f"브라우저에서 {url} 를 여세요. (자동으로 열려요)")
     print("끝내려면 이 창을 닫거나 Ctrl+C를 누르세요.\n")
     if not os.environ.get("PICK_HELPER_NO_BROWSER"):

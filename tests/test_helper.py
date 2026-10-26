@@ -60,5 +60,44 @@ class HelperTest(unittest.TestCase):
         self.assertEqual(h.parse_process_args(args), (60123, "Xy-9_z"))
 
 
+def fake_games():
+    """클라이언트 전적 형식: 내 기록만 들어있는 경기와 10명 전체가 들어있는 경기 섞기"""
+    g = []
+    rows = [(412, "BOTTOM", "DUO_SUPPORT", True)] * 6 + [(555, "BOTTOM", "DUO_SUPPORT", False)] * 3 + \
+           [(103, "MIDDLE", "SOLO", True)] * 2 + [(222, "BOTTOM", "DUO_CARRY", True)]
+    for i, (cid, lane, role, win) in enumerate(rows):
+        g.append({"gameId": i, "queueId": 420, "gameDuration": 1800,
+                  "participants": [{"participantId": 3, "championId": cid, "stats": {"win": win},
+                                    "timeline": {"lane": lane, "role": role}}]})
+    g.append({"gameId": 99, "queueId": 440, "gameDuration": 1700,
+              "participantIdentities": [{"participantId": 1, "player": {"puuid": "other"}},
+                                        {"participantId": 7, "player": {"puuid": "me"}}],
+              "participants": [{"participantId": 1, "championId": 58, "stats": {"win": True}, "timeline": {"lane": "TOP"}},
+                               {"participantId": 7, "championId": 412, "stats": {"win": False},
+                                "timeline": {"lane": "BOTTOM", "role": "SUPPORT"}}]})
+    g.append({"gameId": 100, "queueId": 450, "gameDuration": 1200, "participants": [{"championId": 412}]})  # 칼바람: 제외
+    g.append({"gameId": 0, "queueId": 420, "gameDuration": 1800, "participants": []})  # 중복: 제외
+    return g
+
+
+class PoolTest(unittest.TestCase):
+    def test_parse_pool(self):
+        out = h.parse_pool({"puuid": "me", "gameName": "동재", "tagLine": "KR1"}, fake_games(),
+                           [{"championId": 412, "championPoints": 250000, "championLevel": 30},
+                            {"championId": 89, "championPoints": 80000, "championLevel": 15}], NAMES)
+        self.assertEqual(out["riotId"], "동재#KR1")
+        self.assertEqual(out["mainPosition"], "SUP")
+        self.assertEqual(out["totalGames"], 13)
+        self.assertEqual(out["positions"]["SUP"][0], {"name": "쓰레쉬", "games": 7, "wins": 6})
+        self.assertEqual(out["positions"]["SUP"][1], {"name": "파이크", "games": 3, "wins": 0})
+        self.assertEqual(out["positionGames"], {"SUP": 10, "MID": 2, "ADC": 1})
+        self.assertEqual([m["name"] for m in out["mastery"]], ["쓰레쉬", "레오나"])
+
+    def test_match_lane(self):
+        self.assertEqual(h.match_lane({"lane": "BOTTOM", "role": "DUO_CARRY"}), "ADC")
+        self.assertEqual(h.match_lane({"lane": "JUNGLE", "role": "NONE"}), "JGL")
+        self.assertIsNone(h.match_lane({"lane": "NONE"}))
+
+
 if __name__ == "__main__":
     unittest.main()
