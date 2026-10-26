@@ -250,6 +250,7 @@ details.fold[open] .ssum{display:none}
 
   <p class="note" id="srcNote"><b>데이터 출처 안내:</b> 모든 수치는 실제 경기 통계가 아니라, 챔피언별 초반·중반·후반 강도와 한타 성향을 1~5점으로 직접 매긴 추정 표로 계산해요. 패치 변화도 반영되지 않아요. 방향을 잡는 참고용으로 쓰시고, 상성이 애매할 땐 op.gg 같은 통계 사이트에서 한 번 더 확인하세요.</p>
   <footer class="note" style="display:grid;gap:4px">
+    <span class="count" id="verLine"></span>
     <span><a href="https://github.com/WandaDJ/lol-pick-reader" style="color:inherit">GitHub 저장소</a> · 통계 수집 방법과 갱신 주기는 README에 있어요.</span>
     <span>픽창 판독기는 Riot Games의 승인이나 보증을 받지 않았으며, Riot Games 또는 리그 오브 레전드 제작·관리에 공식적으로 관여한 사람의 견해를 대변하지 않습니다. League of Legends 및 Riot Games는 Riot Games, Inc.의 상표 또는 등록 상표입니다.</span>
   </footer>
@@ -286,6 +287,16 @@ let ONLY_POOL=store.get('pr.only')==='1';
 const PH=["0~10분","10~20분","20~30분","30분 이후"];
 const $=id=>document.getElementById(id);
 const norm=s=>s.replace(/\s+/g,'').toLowerCase();
+// 페이지를 고칠 때마다 올리는 버전 (날짜.번호)
+const PAGE_VERSION='2026.10.27.1';
+let HELPER_VER=null;
+function updateVer(){
+  const el=document.getElementById('verLine');if(!el)return;
+  const parts=[`페이지 ${PAGE_VERSION}`];
+  if(typeof LOCAL!=='undefined'&&LOCAL)parts.push(HELPER_VER?`PC 도우미 ${HELPER_VER}`:'PC 도우미 연결 중');
+  parts.push(typeof META!=='undefined'&&META&&META.generated?`통계 ${String(META.generated).slice(0,10)} (패치 ${(META.patches||[]).join(', ')})`:'통계 없음 (추정 표)');
+  el.textContent=parts.join(' · ');
+}
 let NAMES=Object.keys(D);
 let STATS=null,META=null;
 function fillNames(){NAMES=Object.keys(D);$('champs').innerHTML=NAMES.slice().sort((a,b)=>a.localeCompare(b,'ko')).map(k=>`<option value="${k}">`).join('');}
@@ -663,6 +674,7 @@ function ensureChamp(name){if(!name)return '';const k=find(name);if(k)return k;D
 function setAuto(id,val){val=val||'';if(lastAuto[id]!==val){$(id).value=val;lastAuto[id]=val;}}
 let SITE0=null;
 function applyHelper(st){
+  if(st.helper&&st.helper!==HELPER_VER){HELPER_VER=st.helper;updateVer();}
   if(st.site){if(SITE0===null)SITE0=st.site;else if(st.site!==SITE0){if(!st.inChampSelect){location.reload();return;}showLive('새 버전을 받았어요. 픽창이 끝나면 자동으로 새로고침돼요.','ok');}}
   if(st.client!=='connected'){showLive(st.client==='error'?'클라이언트 응답을 읽지 못했어요. 도우미를 다시 켜보세요.':'롤 클라이언트를 기다리는 중이에요. 클라이언트를 켜면 자동으로 연결돼요.','wait');return;}
   if(!POOL_OK&&Date.now()-POOL_TRY>30000){POOL_TRY=Date.now();fetchPool().then(ok=>{POOL_OK=!!ok;});}
@@ -733,7 +745,7 @@ async function loadStats(){
       }
       for(const [ln,r] of Object.entries(lanes))if(R[ln]&&r.games>=total*0.1&&!R[ln].includes(key))R[ln].push(key);
     }
-    fillNames();
+    fillNames();updateVer();
     const n=Object.keys(champs).length;
     $('dataStatus').textContent=`데이터: Riot API 통계 (패치 ${(META.patches||[]).join(', ')} · ${(META.tiers||[]).join('/')} · 경기 ${META.matches}개 · 챔피언 ${n}개 · ${String(META.generated||'').slice(0,10)} 갱신), 표본 부족 챔피언은 추정값`;
     $('srcNote').innerHTML='<b>데이터 출처 안내:</b> 시간대 점수는 Riot 공식 API로 모은 랭크 경기에서 계산해요. 0~10분, 10~20분, 20~30분은 같은 포지션 상대와의 골드 차이 변화, 30분 이후는 30분 넘게 간 경기의 승률이 근거예요. 표본이 적은 챔피언·포지션과 한타 성향은 직접 매긴 추정값을 써요.';
@@ -743,6 +755,7 @@ async function loadStats(){
   }
 }
 loadStats();
+updateVer();
 // 추정 표에 없는 챔피언(새 챔피언 등)은 Riot 공식 챔피언 목록에서 역할 태그로 대략 추가
 async function loadRoster(){
   try{
