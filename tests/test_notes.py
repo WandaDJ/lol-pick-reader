@@ -24,6 +24,11 @@ class NotesTest(unittest.TestCase):
         extra = set(out["champions"]) - page_champions()
         self.assertFalse(extra, f"페이지에 없는 이름: {sorted(extra)}")
 
+    def test_script_version_matches_page(self):
+        src = (ROOT / "index.html").read_text(encoding="utf-8")
+        ver = re.search(r"PAGE_VERSION='([^']+)'", src).group(1)
+        self.assertIn(f'matchup.js?v={ver}"', src, "matchup.js 주소의 ?v= 값을 PAGE_VERSION과 맞춰주세요")
+
     def test_built_file_is_current(self):
         out = build_notes.build()
         saved = json.loads((ROOT / "data" / "champ-notes.json").read_text(encoding="utf-8"))

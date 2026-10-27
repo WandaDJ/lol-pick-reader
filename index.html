@@ -274,7 +274,7 @@ details.fold[open] .ssum{display:none}
 
 <datalist id="champs"></datalist>
 
-<script src="matchup.js"></script>
+<script src="matchup.js?v=2026.10.27.13"></script>
 <script>
 // [초반(0-10), 중반(10-20), 후반(30+), 한타, 태그] 태그: E 이니시, F 앞라인, P 보호, S 스플릿, M 마법피해, A 물리피해
 const D={
@@ -305,7 +305,7 @@ const PH=["0~10분","10~20분","20~30분","30분 이후"];
 const $=id=>document.getElementById(id);
 const norm=s=>s.replace(/\s+/g,'').toLowerCase();
 // 페이지를 고칠 때마다 올리는 버전 (날짜.번호)
-const PAGE_VERSION='2026.10.27.12';
+const PAGE_VERSION='2026.10.27.13';
 let HELPER_VER=null;
 function updateVer(){
   const el=document.getElementById('verLine');if(!el)return;
@@ -454,7 +454,7 @@ function laneAdv(an,ap,en){
     const missing=idx.filter(i=>(!an[i]&&i!==MY)||!en[i]).length,mineWait=idx.includes(MY)&&!an[MY];
     // 바텀은 2:2 조합(원딜+서폿 궁합, 서폿 상성)까지 반영
     let duo=null;
-    if(nm==='BOT'&&window.MATCHUP){duo=MATCHUP.bot([an[3],an[4]],[en[3],en[4]],D);if(duo.known)for(const p of [0,1])pct[p]=Math.round(clamp(pct[p]+duo.score*4,8,92));}
+    if(nm==='BOT'&&hasBot()){duo=MATCHUP.bot([an[3],an[4]],[en[3],en[4]],D);if(duo.known)for(const p of [0,1])pct[p]=Math.round(clamp(pct[p]+duo.score*4,8,92));}
     const avg=(pct[0]*0.6+pct[1]*0.4);
     return {nm,idx,pct,avg,missing,mineWait,duo,
       ally:idx.map(i=>an[i]||(i===MY?'내 픽':'?')).join(' + '),
@@ -569,7 +569,7 @@ function rolePlan(an,ap,en,r){
       if(myLane.avg>=56&&note(me,'ahead'))p.push(`라인이 유리할 때: ${note(me,'ahead')}`);
       else if(myLane.avg<=44&&note(me,'behind'))p.push(`라인이 불리할 때: ${note(me,'behind')}`);
     }
-    if((MY===3||MY===4)&&window.MATCHUP){
+    if((MY===3||MY===4)&&hasBot()){
       const b=MATCHUP.bot([an[3],an[4]],[en[3],en[4]],D);
       const bv=myLane&&!myLane.missing?(myLane.avg>=54?1:myLane.avg<=46?-1:0):b.verdict;
       if(b.lines.length){const v=['불리','비슷','유리'][bv+1],col=bv>0?'var(--ok)':bv<0?'var(--enemy)':'var(--warn)';
@@ -577,7 +577,7 @@ function rolePlan(an,ap,en,r){
     }
     const foes=MY===4?[en[4],en[3]]:MY===3?[en[3],en[4]]:[en[MY]];
     for(const f of foes.filter(Boolean)){
-      const m=MU&&window.MATCHUP&&f!==me?MATCHUP.gen(me,f,{D,T:MU.traits,pair:MU.pairs[me+'|'+f],note,stat:matchup(me,f,MY),role:lane}):null;
+      const m=MU&&window.MATCHUP&&MATCHUP.gen&&f!==me?MATCHUP.gen(me,f,{D,T:MU.traits,pair:MU.pairs[me+'|'+f],note,stat:matchup(me,f,MY),role:lane}):null;
       if(m&&m.lines.length){
         const v=['불리','비슷','유리'][m.verdict+1],col=m.verdict>0?'var(--ok)':m.verdict<0?'var(--enemy)':'var(--warn)';
         p.push(`vs ${f} <span class="pill" style="color:${col}">라인전 ${v}</span>${tag(f)}<br>${m.lines.map(l=>`· ${l}`).join('<br>')}`);
@@ -612,6 +612,8 @@ function plan(r){
   return p;
 }
 
+// 옛 matchup.js가 캐시에 남아 있어도 페이지가 멈추지 않게
+function hasBot(){return !!(window.MATCHUP&&MATCHUP.bot&&MATCHUP.synergy);}
 function render(){
   const {an,ap,en,bad}=read();
   $('badMsg').hidden=!bad.length;
@@ -626,7 +628,7 @@ function render(){
     return `<div class="ph${i===peak&&v>52?' peak':''}"><span class="t">${PH[i]}</span><span class="pct" style="color:${stCol(v)}">${v}%</span><div class="dv"><i style="left:${left}%;width:${width}%;background:${stCol(v)}"></i></div><span class="st" style="color:${stCol(v)}">${stTxt(v)}</span></div>`}).join('');
   $('chart').innerHTML=svgChart(r.adv);
   $('sum-phase').textContent=r.adv.map((v,i)=>`${PH[i]} ${v}%`).join(' · ');
-  r.L=renderLanes(an,ap,en);
+  try{r.L=renderLanes(an,ap,en);}catch(e){console.error('라인별 우세',e);r.L=[];}
   for(const l of r.L)if(l.avg<=40&&!l.missing){r.mc=Math.min(95,r.mc+6);r.mcWhy=r.mcWhy.filter(t=>!t.startsWith('구도상 큰 약점'));r.mcWhy.push(`${l.nm} 라인전이 크게 불리해요 (${l.ally} vs ${l.enemy}). ${l.nm==='BOT'?'바텀 1차 포탑을 일찍 잃지 않게 정글·미드가 커버해야 해요':l.nm==='TOP'?'탑은 버티는 운영, 전령 싸움은 불리해요':l.nm==='MID'?'미드가 밀리면 로밍을 막기 어려워요':'정글 싸움을 피하고 라인 주도권이 있는 쪽에서 움직이세요'}.`);}
 
   $('sum-tf').textContent=`${r.tfAdv}% · ${stTxt(r.tfAdv)}`;
@@ -643,7 +645,7 @@ function render(){
   $('mcBig').innerHTML=`<b style="color:${mcL[1]}">${mcL[0]}</b><span class="pill" style="color:${mcL[1]}">난이도 ${r.mc}</span>`;
   $('mcWhy').innerHTML=r.mcWhy.map(t=>`<li>${t}</li>`).join('');
   $('plan').innerHTML=plan(r).map(t=>`<li>${t}</li>`).join('');
-  const rp=rolePlan(an,ap,en,r);
+  let rp;try{rp=rolePlan(an,ap,en,r);}catch(e){console.error('내 역할',e);rp=['내 역할을 계산하지 못했어요. 새로고침(Ctrl+Shift+R)해 보세요.'];}
   $('roleTitle').textContent=an[MY]?`내 역할 · ${an[MY]} (${LANES[MY]})`:`내 역할 (${LANES[MY]})`;
   $('rolePlan').innerHTML=rp.map(t=>`<li>${t}</li>`).join('');
 
@@ -653,7 +655,7 @@ function render(){
   const ctx=recContext(an,ap,en);
   let cands=R[lane].filter(c=>!ctx.taken.has(c));
   if(ONLY_POOL)cands=cands.filter(c=>ctx.pool.has(c));
-  const rows=cands.map(c=>scoreCand(c,ctx,foe)).sort((a,b)=>b.score-a.score).slice(0,12);
+  const rows=cands.map(c=>{try{return scoreCand(c,ctx,foe);}catch(e){console.error('추천',c,e);return null;}}).filter(Boolean).sort((a,b)=>b.score-a.score).slice(0,12);
   $('ranks').innerHTML=rows.length?rows.map((o,i)=>`<div class="rank"><span class="n">${i+1}</span><span class="name">${o.c}${o.mine?`<span class="badge">${o.games?o.games+'판':o.mastery?'숙련도':'챔프폭'}</span>`:''}</span><span class="bar"><i style="width:${Math.round(o.score)}%"></i></span><span class="v">${Math.round(o.score)}</span><span class="why">${o.w}</span><button type="button" class="x" data-ban="${o.c}" aria-label="${o.c} 밴됨으로 표시">밴됨</button></div>`).join('')
     :`<p class="empty">${ONLY_POOL?`${lane} 챔프폭에 남은 챔피언이 없어요. 위 칸에 챔프폭을 넣거나 '전체'로 바꿔보세요.`:'추천할 챔피언이 없어요.'}</p>`;
   $('sum-rec').textContent=rows.length?`1위 ${rows[0].c} ${Math.round(rows[0].score)}점`+(rows[1]?` · 2위 ${rows[1].c}`:''):'';
@@ -713,7 +715,7 @@ function scoreCand(c,ctx,foe){
     }
   }
   // 바텀: 내 원딜(서폿)과의 궁합 + 상대 바텀 2:2
-  if((MY===3||MY===4)&&window.MATCHUP){
+  if((MY===3||MY===4)&&hasBot()){
     const mate=MY===4?ctx.others[3]:ctx.others[4];
     const pair=MY===4?[mate,c]:[c,mate];
     const s=mate?MATCHUP.synergy(pair[0],pair[1]):null;
