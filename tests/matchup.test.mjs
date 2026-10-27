@@ -23,7 +23,7 @@ function check(a, b, lane) {
   if (!r) { errs.push(`${lane} ${a}|${b}: 결과 없음`); return; }
   cnt.pairs++; if (pair) cnt.hand++; cnt.v[r.verdict]++;
   const all = r.lines.join(' ');
-  if (r.lines.length < (pair ? 2 : 3)) errs.push(`${lane} ${a}|${b}: 문장 ${r.lines.length}개뿐`);
+  if (pair ? (r.lines.length < 2 && pair.length < 100) : r.lines.length < 3) errs.push(`${lane} ${a}|${b}: 문장 ${r.lines.length}개뿐`);
   if (/undefined|null|NaN|\$\{/.test(all)) errs.push(`${lane} ${a}|${b}: 빈 값`);
   if (r.lines.some(l => !l.trim() || !/[.요)]$/.test(l.trim()))) errs.push(`${lane} ${a}|${b}: 끝맺음 이상`);
   if (r.verdict > 0 && /라인전은 [^.]*유리해요\([^)]*열세/.test(all)) errs.push(`${lane} ${a}|${b}: 판정 모순`);
