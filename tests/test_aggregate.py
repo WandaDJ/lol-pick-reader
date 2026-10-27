@@ -75,3 +75,12 @@ class AggregateTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PruneTest(unittest.TestCase):
+    def test_keeps_latest_patches(self):
+        import collect
+        recs = [{"id": str(i), "patch": p, "duration": 1800, "parts": []} for i, p in enumerate(["26.9", "26.10", "26.20", "26.21", "26.21"])]
+        kept = collect.prune(recs, 2)
+        self.assertEqual(sorted({r["patch"] for r in kept}), ["26.20", "26.21"])
+        self.assertEqual(len(kept), 3)

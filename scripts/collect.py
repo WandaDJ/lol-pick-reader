@@ -171,11 +171,16 @@ def collect(api: RiotClient, args) -> list[dict]:
         match_ids.extend(ids)
         if i % 25 == 0:
             print(f"  {i}/{len(players)}명 확인, 경기 후보 {len(set(match_ids))}개")
-    todo = [m for m in dict.fromkeys(match_ids) if m not in records][: max(0, args.max_matches - len(records))]
+    # 한 번 실행에 새로 받을 경기 수 (캐시 전체 크기와는 별개라 매번 새 경기가 쌓여요)
+    todo = [m for m in dict.fromkeys(match_ids) if m not in records][: max(0, args.max_matches)]
     print(f"새로 받을 경기: {len(todo)}개 (경기당 요청 2회)")
+    deadline = time.monotonic() + args.time_budget * 60
 
     with cache_file.open("a", encoding="utf-8") as fh:
         for i, mid in enumerate(todo, 1):
+            if time.monotonic() > deadline:
+                print(f"  시간 제한({args.time_budget}분)에 닿아 {i - 1}경기에서 멈추고 집계로 넘어가요")
+                break
             match = api.region_get(f"/lol/match/v5/matches/{mid}")
             if not match:
                 continue
@@ -187,6 +192,23 @@ def collect(api: RiotClient, args) -> list[dict]:
             if i % 50 == 0:
                 print(f"  {i}/{len(todo)}경기 완료")
     return list(records.values())
+
+
+def patch_key(p: str) -> tuple:
+    try:
+        return tuple(int(x) for x in p.split("."))
+    except ValueError:
+        return (0,)
+
+
+def prune(records: list[dict], keep_patches: int, cache_file: Path | None = None) -> list[dict]:
+    """최신 패치 몇 개만 남기고 오래된 경기는 버려요 (메타가 바뀌면 옛 경기가 섞이지 않게)."""
+    patches = sorted({r["patch"] for r in records}, key=patch_key)[-keep_patches:]
+    kept = [r for r in records if r["patch"] in patches]
+    if cache_file and len(kept) != len(records):
+        cache_file.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in kept), encoding="utf-8")
+        print(f"오래된 패치 경기 {len(records) - len(kept)}개 정리 (남은 패치 {patches})")
+    return kept
 
 
 # ---------------------------------------------------------------- 집계
@@ -292,14 +314,16 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Riot API로 챔피언 시간대 지표 수집")
     ap.add_argument("--platform", default="kr")
     ap.add_argument("--region", default="asia")
-    ap.add_argument("--tiers", default="EMERALD,DIAMOND", help="쉼표 구분 (IRON~DIAMOND)")
+    ap.add_argument("--tiers", default="PLATINUM,EMERALD", help="쉼표 구분 (IRON~DIAMOND)")
     ap.add_argument("--divisions", default="I,II,III,IV")
     ap.add_argument("--players", type=int, default=300)
     ap.add_argument("--per-player", type=int, default=15)
-    ap.add_argument("--max-matches", type=int, default=1500)
+    ap.add_argument("--max-matches", type=int, default=3000, help="한 번 실행에 새로 받을 최대 경기 수")
+    ap.add_argument("--time-budget", type=int, default=260, help="경기 받기에 쓸 최대 시간(분). 넘으면 멈추고 집계")
+    ap.add_argument("--keep-patches", type=int, default=3, help="캐시에 남길 최신 패치 수")
     ap.add_argument("--days", type=int, default=14, help="최근 며칠 경기만")
     ap.add_argument("--patches", default="", help="이 패치만 집계 (예: 26.21). 비우면 수집된 경기 중 최신 2개 패치")
-    ap.add_argument("--min-games", type=int, default=30)
+    ap.add_argument("--min-games", type=int, default=10, help="이보다 적은 챔피언·포지션은 빼요 (페이지에서 판수로 한 번 더 보정)")
     ap.add_argument("--cache", default="data/cache")
     ap.add_argument("--out", default="data/stats.json")
     args = ap.parse_args(argv)
@@ -312,15 +336,15 @@ def main(argv=None):
     api = RiotClient(key, args.platform, args.region)
     records = collect(api, args)
 
+    records = prune(records, args.keep_patches, Path(args.cache) / "matches.jsonl")
     if args.patches:
         patches = [p.strip() for p in args.patches.split(",")]
     else:
-        def pkey(p):
-            try:
-                return tuple(int(x) for x in p.split("."))
-            except ValueError:
-                return (0,)
-        patches = sorted({r["patch"] for r in records}, key=pkey)[-2:]
+        # 최신 패치 경기가 충분하면 최신 패치만, 적으면 직전 패치까지 섞어요
+        ordered = sorted({r["patch"] for r in records}, key=patch_key)
+        latest = ordered[-1:] if ordered else []
+        n_latest = sum(1 for r in records if r["patch"] in latest)
+        patches = latest if n_latest >= 4000 else ordered[-2:]
 
     names, dd_version = korean_names()
     result = aggregate(records, names, patches, args.min_games)

@@ -2,12 +2,12 @@ name: 통계 갱신
 
 on:
   schedule:
-    - cron: "17 18 * * 0"   # 매주 월요일 03:17 (KST)
+    - cron: "17 18 * * *"   # 매일 03:17 (KST) — 쉬다 와도 최신 패치 메타로 추천받도록
   workflow_dispatch:
     inputs:
       max_matches:
-        description: "최대 경기 수"
-        default: "1500"
+        description: "이번에 새로 받을 최대 경기 수"
+        default: "3000"
 
 permissions:
   contents: write
@@ -19,7 +19,7 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 330
     steps:
       - uses: actions/checkout@v4
 
@@ -45,7 +45,7 @@ jobs:
             echo "::error::저장소 Settings > Secrets and variables > Actions 에 RIOT_API_KEY를 등록하세요."
             exit 1
           fi
-          python scripts/collect.py --max-matches "${{ github.event.inputs.max_matches || '1500' }}"
+          python scripts/collect.py --max-matches "${{ github.event.inputs.max_matches || '3000' }}"
 
       - name: 변경 사항 커밋
         run: |
