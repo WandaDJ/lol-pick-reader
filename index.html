@@ -274,6 +274,7 @@ details.fold[open] .ssum{display:none}
 
 <datalist id="champs"></datalist>
 
+<script src="matchup.js"></script>
 <script>
 // [초반(0-10), 중반(10-20), 후반(30+), 한타, 태그] 태그: E 이니시, F 앞라인, P 보호, S 스플릿, M 마법피해, A 물리피해
 const D={
@@ -304,7 +305,7 @@ const PH=["0~10분","10~20분","20~30분","30분 이후"];
 const $=id=>document.getElementById(id);
 const norm=s=>s.replace(/\s+/g,'').toLowerCase();
 // 페이지를 고칠 때마다 올리는 버전 (날짜.번호)
-const PAGE_VERSION='2026.10.27.10';
+const PAGE_VERSION='2026.10.27.11';
 let HELPER_VER=null;
 function updateVer(){
   const el=document.getElementById('verLine');if(!el)return;
@@ -527,7 +528,7 @@ function rolePlan(an,ap,en,r){
   const p=[];
   // 0~10분
   if(kind==='catch'||kind==='engage'){
-    p.push(`0~10분: ${myEarly?'내가 가장 강한 구간이에요. ':''}${myLane&&myLane.avg>=54?'바텀 주도권으로 레벨 2 선점과 킬각을 노리고 첫 용을 가져가세요.':myLane&&myLane.avg<=46?'바텀은 불리해요. 무리한 교전 대신 웨이브를 당겨 받고 정글 합류를 기다리세요.':'바텀 2:2 주도권을 먼저 잡는 쪽이 첫 용을 가져가요.'}${weak.length?` 웨이브를 민 뒤엔 밀리고 있는 ${weak.join('·')}로 로밍해서 손해를 줄여주세요.`:''}`);
+    p.push(`0~10분: ${myEarly?'내가 가장 강한 구간이에요. ':''}${myLane&&myLane.avg>=54?'바텀 주도권으로 레벨 2 선점과 킬각을 노리고 첫 용을 가져가세요.':myLane&&myLane.avg<=46?'바텀은 불리해요. 무리한 교전 대신 웨이브를 당겨 받고 정글 합류를 기다리세요.':'바텀 2:2 주도권을 먼저 잡는 쪽이 첫 용을 가져가요.'}${weak.length?` 웨이브를 민 뒤엔 밀리고 있는 ${weak.join('·')} 쪽으로 로밍해서 손해를 줄여주세요.`:''}`);
   }else if(kind==='enchanter'){
     p.push(`0~10분: 무리한 딜교환보다 원딜의 CS와 체력을 지켜주세요.${myLane&&myLane.avg<=46?' 바텀이 불리해서 포탑 근처에서 버티는 게 좋아요.':''}`);
   }else if(kind==='mage'){
@@ -565,8 +566,14 @@ function rolePlan(an,ap,en,r){
       if(myLane.avg>=56&&note(me,'ahead'))p.push(`라인이 유리할 때: ${note(me,'ahead')}`);
       else if(myLane.avg<=44&&note(me,'behind'))p.push(`라인이 불리할 때: ${note(me,'behind')}`);
     }
-    const foes=(MY===3||MY===4)?[en[3],en[4]]:[en[MY]];
-    for(const f of foes.filter(Boolean)){const a=note(f,'against');if(a)p.push(`상대 ${f} 주의: ${a}${tag(f)}`);}
+    const foes=MY===4?[en[4],en[3]]:MY===3?[en[3],en[4]]:[en[MY]];
+    for(const f of foes.filter(Boolean)){
+      const m=MU&&window.MATCHUP&&f!==me?MATCHUP.gen(me,f,{D,T:MU.traits,pair:MU.pairs[me+'|'+f],note,stat:matchup(me,f,MY),role:lane}):null;
+      if(m&&m.lines.length){
+        const v=['불리','비슷','유리'][m.verdict+1],col=m.verdict>0?'var(--ok)':m.verdict<0?'var(--enemy)':'var(--warn)';
+        p.push(`vs ${f} <span class="pill" style="color:${col}">라인전 ${v}</span>${tag(f)}<br>${m.lines.map(l=>`· ${l}`).join('<br>')}`);
+      }else{const a=note(f,'against');if(a)p.push(`상대 ${f} 주의: ${a}${tag(f)}`);}
+    }
   }
   return p;
 }
@@ -890,6 +897,19 @@ async function loadNotes(){
   }catch(e){}
 }
 loadNotes();
+// ---- 맞라인 상대별 문장: 특성표 + 직접 쓴 문장 (data/matchups.json), 노트와 같은 방식으로 저장
+var MU=null;
+function setMU(m){if(m&&m.traits&&m.pairs){MU=m;return true;}return false;}
+async function loadMU(){
+  try{const c=JSON.parse(store.get('pr.matchups')||'null');if(setMU(c))render();}catch(e){}
+  try{
+    const r=await fetch('data/matchups.json',{cache:'no-cache'});
+    if(!r.ok)return;
+    const m=await r.json();
+    if(!MU||m.version!==MU.version){setMU(m);store.set('pr.matchups',JSON.stringify(m));render();}
+  }catch(e){}
+}
+loadMU();
 
 // ---- 아이디로 챔프폭 불러오기 (Cloudflare Worker 중계)
 let POOL_API='';

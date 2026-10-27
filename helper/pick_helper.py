@@ -38,10 +38,10 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.5.1"
+VERSION = "1.6.0"
 PORT = int(os.environ.get("PICK_HELPER_PORT", "27150"))
 SITE = os.environ.get("PICK_HELPER_SITE", "https://wandadj.github.io/lol-pick-reader/")
-SITE_FILES = ["index.html", "data/stats.json", "data/config.json", "data/champ-notes.json"]
+SITE_FILES = ["index.html", "matchup.js", "data/stats.json", "data/config.json", "data/champ-notes.json", "data/matchups.json"]
 LANE = {"top": "TOP", "jungle": "JGL", "middle": "MID", "bottom": "ADC", "utility": "SUP"}
 ALLOWED_ORIGINS = {"https://wandadj.github.io", f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}"}
 
@@ -799,7 +799,7 @@ class Handler(BaseHTTPRequestHandler):
             if body is None:
                 self.send_error(404)
                 return
-            ctype = "text/html; charset=utf-8" if path.endswith(".html") else "application/json; charset=utf-8"
+            ctype = "text/html; charset=utf-8" if path.endswith(".html") else "text/javascript; charset=utf-8" if path.endswith(".js") else "application/json; charset=utf-8"
         else:
             self.send_error(404)
             return
