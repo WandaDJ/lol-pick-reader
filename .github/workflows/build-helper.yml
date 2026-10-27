@@ -5,7 +5,7 @@ name: PC 도우미 빌드
 on:
   push:
     branches: [main]
-    paths: ["helper/**", "index.html", ".github/workflows/build-helper.yml"]
+    paths: ["helper/**", "index.html", "matchup.js", "tests/**", ".github/workflows/build-helper.yml"]
   workflow_dispatch:
 
 permissions:
