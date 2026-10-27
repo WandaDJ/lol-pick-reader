@@ -2,8 +2,10 @@
 //   node tests/matchup.test.mjs
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 const require = createRequire(import.meta.url);
-const root = new URL('..', import.meta.url).pathname;
+const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..') + path.sep;
 const M = require(root + 'matchup.js');
 const src = fs.readFileSync(root + 'index.html', 'utf8');
 const D = Function('return {' + src.match(/const D=\{([\s\S]*?)\n\};/)[1] + '}')();

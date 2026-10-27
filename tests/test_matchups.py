@@ -20,7 +20,7 @@ class MatchupsTest(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("node"), "node 없음")
     def test_every_pair_reads_well(self):
-        r = subprocess.run(["node", str(ROOT / "tests" / "matchup.test.mjs")], capture_output=True, text=True)
+        r = subprocess.run(["node", str(ROOT / "tests" / "matchup.test.mjs")], capture_output=True, text=True, encoding="utf-8", errors="replace")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
 
