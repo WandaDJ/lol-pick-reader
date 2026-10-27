@@ -1,11 +1,11 @@
 name: PC 도우미 빌드
 
-# helper/ 폴더나 페이지가 바뀌어 main에 올라가면 자동으로 빌드하고,
+# helper/ 폴더(도우미 코드)가 바뀌어 main에 올라갈 때만 자동으로 빌드하고,
 # helper/pick_helper.py 의 VERSION 으로 Release(helper-v버전)를 만들거나 갱신해요.
 on:
   push:
     branches: [main]
-    paths: ["helper/**", "index.html", "matchup.js", "tests/**", ".github/workflows/build-helper.yml"]
+    paths: ["helper/**", ".github/workflows/build-helper.yml"]
   workflow_dispatch:
 
 permissions:
