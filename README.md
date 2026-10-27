@@ -76,6 +76,7 @@ python3 helper/pick_helper.py
 - `data/traits.json`: 172개 챔피언 특성표 (사거리, 올인, 견제, 회복, 기동성, CC). 두 챔피언 특성을 비교해서 사거리·딜교환·회복·CC·후반 문장을 만들어요 (`matchup.js`).
 - `data/pairs/*.json`: 자주 만나는 서폿·원딜 조합은 직접 쓴 문장이 있고, 있으면 먼저 보여줘요.
 - 롤 통계(`data/stats.json`)에 그 조합이 10판 이상 있으면 라인전 유리·불리 판정은 통계 승률을 따라요.
+- 바텀은 2:2로 따로 계산해요 (`matchup.js`의 `bot`). 원딜을 올인형·견제형·후반형, 서폿을 진입형·보호형·견제형·수비형으로 나눠 우리 바텀 궁합과 상대 바텀 궁합, 서폿 상성(진입 > 보호 > 견제 > 진입), 초반 2:2 힘을 비교해요. 라인별 우세의 BOT 점수, 게임 플랜의 "바텀 2:2", 서폿·원딜 추천 점수(내 원딜·서폿과의 궁합)에 반영돼요.
 - 고친 뒤 `python scripts/build_matchups.py`를 실행하면 `data/matchups.json`이 만들어지고, `node tests/matchup.test.mjs`가 모든 조합을 만들어 보고 빈 문장·조사·모순을 검사해요. `node tests/matchup.test.mjs "파이크|쓰레쉬" SUP`처럼 한 조합만 볼 수도 있어요.
 
 ## 데이터는 어디서 오나요

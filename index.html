@@ -305,7 +305,7 @@ const PH=["0~10분","10~20분","20~30분","30분 이후"];
 const $=id=>document.getElementById(id);
 const norm=s=>s.replace(/\s+/g,'').toLowerCase();
 // 페이지를 고칠 때마다 올리는 버전 (날짜.번호)
-const PAGE_VERSION='2026.10.27.11';
+const PAGE_VERSION='2026.10.27.12';
 let HELPER_VER=null;
 function updateVer(){
   const el=document.getElementById('verLine');if(!el)return;
@@ -452,8 +452,11 @@ function laneAdv(an,ap,en){
       return Math.round(clamp(50+d*(idx.length>1?6:10),8,92));
     });
     const missing=idx.filter(i=>(!an[i]&&i!==MY)||!en[i]).length,mineWait=idx.includes(MY)&&!an[MY];
+    // 바텀은 2:2 조합(원딜+서폿 궁합, 서폿 상성)까지 반영
+    let duo=null;
+    if(nm==='BOT'&&window.MATCHUP){duo=MATCHUP.bot([an[3],an[4]],[en[3],en[4]],D);if(duo.known)for(const p of [0,1])pct[p]=Math.round(clamp(pct[p]+duo.score*4,8,92));}
     const avg=(pct[0]*0.6+pct[1]*0.4);
-    return {nm,idx,pct,avg,missing,mineWait,
+    return {nm,idx,pct,avg,missing,mineWait,duo,
       ally:idx.map(i=>an[i]||(i===MY?'내 픽':'?')).join(' + '),
       enemy:idx.map(i=>en[i]||'?').join(' + ')};
   });
@@ -468,7 +471,7 @@ function offRole(l,an,en){
   const odd=[];l.idx.forEach(i=>{[an[i],en[i]].forEach(c=>{if(c&&R[LANES[i]]&&!R[LANES[i]].includes(c))odd.push(c);});});
   return odd.length?`<br><span class="risk">${odd.join(', ')}: 보통 이 라인에 가지 않는 챔피언이라 추정이 부정확해요</span>`:'';
 }
-function laneTip(l){return l.avg>=56?LANE_TIP[l.nm].up:l.avg<=44?LANE_TIP[l.nm].dn:LANE_TIP[l.nm].ev;}
+function laneTip(l){const b=l.avg>=56?LANE_TIP[l.nm].up:l.avg<=44?LANE_TIP[l.nm].dn:LANE_TIP[l.nm].ev;return l.duo&&l.duo.synA?`${b} ${l.duo.lines[0]}`:b;}
 function strategy(L){
   const s=[],up=L.filter(l=>l.avg>=56),dn=L.filter(l=>l.avg<=44);
   const jg=L.find(l=>l.nm==='JGL');
@@ -565,6 +568,12 @@ function rolePlan(an,ap,en,r){
     if(myLane&&!myLane.missing){
       if(myLane.avg>=56&&note(me,'ahead'))p.push(`라인이 유리할 때: ${note(me,'ahead')}`);
       else if(myLane.avg<=44&&note(me,'behind'))p.push(`라인이 불리할 때: ${note(me,'behind')}`);
+    }
+    if((MY===3||MY===4)&&window.MATCHUP){
+      const b=MATCHUP.bot([an[3],an[4]],[en[3],en[4]],D);
+      const bv=myLane&&!myLane.missing?(myLane.avg>=54?1:myLane.avg<=46?-1:0):b.verdict;
+      if(b.lines.length){const v=['불리','비슷','유리'][bv+1],col=bv>0?'var(--ok)':bv<0?'var(--enemy)':'var(--warn)';
+        p.push(`바텀 2:2${b.known?` <span class="pill" style="color:${col}">${v}</span>`:''}<br>${b.lines.map(l=>`· ${l}`).join('<br>')}`);}
     }
     const foes=MY===4?[en[4],en[3]]:MY===3?[en[3],en[4]]:[en[MY]];
     for(const f of foes.filter(Boolean)){
@@ -702,6 +711,14 @@ function scoreCand(c,ctx,foe){
       lanePart=(e-meanFoe)*1.5;
       if(e<=2)w.push('<span class="risk">블라인드 주의: 초반이 약해 카운터 당하기 쉬움 (추정)</span>');
     }
+  }
+  // 바텀: 내 원딜(서폿)과의 궁합 + 상대 바텀 2:2
+  if((MY===3||MY===4)&&window.MATCHUP){
+    const mate=MY===4?ctx.others[3]:ctx.others[4];
+    const pair=MY===4?[mate,c]:[c,mate];
+    const s=mate?MATCHUP.synergy(pair[0],pair[1]):null;
+    if(s){lanePart+=(s.v-1)*3;w.push(s.v>=2?`${mate}와 궁합 좋음${s.duo?' (자주 쓰는 조합)':''}`.replace(`${mate}와`,jo(mate,'과','와')):s.v===1?`${jo(mate,'과','와')} 궁합 보통`:`<span class="risk">${jo(mate,'과','와')} 궁합 안 맞음</span>`);}
+    if(mate&&ctx.en[3]&&ctx.en[4]){const b=MATCHUP.bot(pair,[ctx.en[3],ctx.en[4]],D);if(b.known){lanePart+=b.score*1.5;w.push(`바텀 2:2 ${['불리','비슷','유리'][b.verdict+1]}`);}}
   }
   w.push(`팀 평균 우세 ${avg-ctx.base>=0?'+':''}${(avg-ctx.base).toFixed(1)} · 한타 ${x.tfAdv}%`);
   w.push(pc.src==='stat'?`통계 ${pc.games}판 · 승률 ${(pc.wr*100).toFixed(1)}%`:'추정값');

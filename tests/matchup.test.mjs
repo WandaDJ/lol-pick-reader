@@ -35,6 +35,23 @@ for (const lane of ['TOP', 'JGL', 'MID', 'ADC', 'SUP'])
   for (const a of R[lane]) for (const b of R[lane]) if (a !== b) check(a, b, lane);
 for (const a of R.SUP) for (const b of R.ADC) if (a !== b) { check(a, b, 'SUP>ADC'); check(b, a, 'ADC>SUP'); }
 for (const k of Object.keys(mu.pairs)) { const [a, b] = k.split('|'); if (a === b) continue; }
+
+// 바텀 2:2: 우리 원딜·서폿 모든 조합 x 상대 조합 일부
+let botN = 0;
+const enemies = []; for (let i = 0; i < R.ADC.length; i += 3) for (let j = 0; j < R.SUP.length; j += 4) enemies.push([R.ADC[i], R.SUP[j]]);
+for (const a of R.ADC) for (const s of R.SUP) {
+  if (a === s) continue;
+  if (!M.synergy(a, s)) errs.push(`바텀 분류 없음: ${a}|${s}`);
+  for (const e of enemies) {
+    if (e.includes(a) || e.includes(s)) continue;
+    const b = M.bot([a, s], e, D); botN++;
+    const all = b.lines.join(' ');
+    if (b.lines.length < 3) errs.push(`바텀 ${a}+${s} vs ${e}: 문장 ${b.lines.length}개`);
+    if (/undefined|null|NaN|\$\{/.test(all)) errs.push(`바텀 ${a}+${s} vs ${e}: 빈 값`);
+    if ([a, s, ...e].some(n => new RegExp(n + '(이가|가이|은는|는은|과와|와과) ').test(all))) errs.push(`바텀 ${a}+${s} vs ${e}: 조사 이상`);
+  }
+}
+console.log(`바텀 2:2 조합 ${botN}개 확인`);
 console.log(`조합 ${cnt.pairs}개 · 직접 쓴 문장 ${cnt.hand}개 · 유리 ${cnt.v[1]} / 비슷 ${cnt.v[0]} / 불리 ${cnt.v[-1]}`);
 const pc = new Map(); for (const v of Object.values(mu.pairs)) pc.set(v, (pc.get(v) || 0) + 1);
 const handDup = [...pc].filter(([l, n]) => n > 1);

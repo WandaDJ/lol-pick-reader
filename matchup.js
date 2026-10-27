@@ -107,7 +107,79 @@
     return { verdict, src, score: Math.round(score * 10) / 10, lines: lines.map(s => s.trim()) };
   }
 
-  const api = { gen, handVerdict, jo };
+    // ---------------------------------------------------------------- 바텀 2:2 (원딜+서폿 vs 원딜+서폿)
+  const ADC_TYPE = {};
+  'allin:드레이븐,루시안,사미라,칼리스타,트리스타나,닐라,미스 포츈,아크샨/poke:이즈리얼,바루스,케이틀린,진,애쉬,시비르,세나,직스,세라핀,스웨인/hyper:징크스,코그모,베인,아펠리오스,트위치,제리,카이사,스몰더,유나라,자야'
+    .split('/').forEach(g => { const [k, v] = g.split(':'); v.split(',').forEach(n => ADC_TYPE[n] = k); });
+  const SUP_TYPE = {};
+  'engage:레오나,노틸러스,알리스타,렐,라칸,쓰레쉬,블리츠크랭크,파이크,뽀삐,마오카이,니코,세트,갈리오,말파이트,판테온/enchanter:룰루,잔나,소라카,밀리오,나미,유미,레나타 글라스크,카르마,소나,바드,질리언/mage:제라스,럭스,브랜드,자이라,벨코즈,세나,하이머딩거,멜,스웨인,모르가나,샤코,세라핀/peel:브라움,탐 켄치,타릭,쉔'
+    .split('/').forEach(g => { const [k, v] = g.split(':'); v.split(',').forEach(n => SUP_TYPE[n] = k); });
+  const ADC_NAME = { allin: '올인형', poke: '견제형', hyper: '후반형' };
+  const SUP_NAME = { engage: '진입형', enchanter: '보호형', mage: '견제형', peel: '수비형' };
+  const SYN = { engage: { allin: 2, hyper: 1, poke: 0 }, enchanter: { allin: 1, hyper: 2, poke: 1 }, mage: { allin: 0, hyper: 0, poke: 2 }, peel: { allin: 1, hyper: 2, poke: 0 } };
+  const DUO = new Set(['루시안|나미', '루시안|브라움', '자야|라칸', '카이사|노틸러스', '사미라|레오나', '사미라|노틸러스', '사미라|라칸', '코그모|룰루', '징크스|룰루', '징크스|자이라', '드레이븐|레오나', '드레이븐|노틸러스', '케이틀린|럭스', '케이틀린|모르가나', '이즈리얼|카르마', '이즈리얼|유미', '베인|룰루', '트위치|룰루', '트위치|유미', '아펠리오스|쓰레쉬', '칼리스타|쓰레쉬', '칼리스타|레나타 글라스크', '칼리스타|렐', '제리|룰루', '제리|유미', '진|제라스', '바루스|브랜드', '애쉬|브랜드', '시비르|카르마', '트리스타나|레오나', '닐라|나미']);
+  // 서폿 성향 상성: 진입 > 보호, 보호 > 견제, 견제 > 진입, 수비는 진입에 강함
+  const TRI = { engage: { enchanter: 1, mage: -1 }, enchanter: { mage: 1, engage: -1 }, mage: { engage: 1, enchanter: -1 }, peel: { engage: 0.5 } };
+  const SYN_TEXT = {
+    'engage|allin': '서폿이 CC를 맞춘 순간 원딜이 바로 따라 들어가는 조합이에요. 레벨 2·3과 첫 귀환 직후처럼 스킬이 다 있을 때 같이 올인하세요.',
+    'engage|hyper': '서폿은 진입하지만 원딜 딜이 초반엔 약해요. 무리한 올인보다 서폿 CC로 한 명을 확실히 묶을 때만 싸우고, 원딜 2코어 이후 진입을 늘리세요.',
+    'engage|poke': '원딜은 견제, 서폿은 진입이라 템포가 달라요. 원딜이 견제로 체력을 깎아둔 뒤에만 서폿이 들어가세요.',
+    'enchanter|allin': '서폿 보호막·강화로 원딜의 짧은 딜교환이 강해져요. 원딜이 들어갈 때 서폿 강화 스킬을 같이 넣고, 상대 반격엔 보호막을 아껴두세요.',
+    'enchanter|hyper': '원딜을 키우는 조합이에요. 라인전은 CS와 체력 지키기 위주로 하고, 원딜 2코어 이후 한타에서 서폿이 원딜만 지키면 이겨요.',
+    'enchanter|poke': '견제와 회복으로 체력 차이를 벌리는 조합이에요. 상대 진입만 피하면 라인전이 편하니 미니언 뒤 거리를 지키세요.',
+    'mage|poke': '둘 다 견제라 라인전 체력 싸움에 강해요. 진입형 상대에게 붙지 않게 넓게 서고, 체력이 깎인 상대가 귀환하면 포탑을 깎으세요.',
+    'mage|allin': '서폿 견제로 체력을 깎고 원딜이 마무리하는 조합이에요. 서폿이 진입을 받아줄 수 없으니 원딜이 너무 앞에 서지 마세요.',
+    'mage|hyper': '서폿 견제로 라인을 버티지만 원딜을 지켜줄 수단이 적어요. 원딜이 상대 진입 스킬 사거리 밖에서 CS를 받게 하세요.',
+    'peel|allin': '서폿이 앞에서 맞아주고 원딜이 딜교환하는 조합이에요. 상대 진입을 서폿이 받아낸 직후가 원딜이 들어갈 타이밍이에요.',
+    'peel|hyper': '원딜을 지키는 조합이에요. 상대 진입을 서폿이 받아내면 원딜이 오래 딜할 수 있어 후반 한타가 강해요.',
+    'peel|poke': '서폿 견제가 약해서 원딜 견제에 기대야 해요. 서폿은 원딜 옆에서 상대 진입만 막아주세요.'
+  };
+  const FOE_TEXT = {
+    engage: '상대 서폿이 진입형이라 레벨 2·3과 6레벨 올인이 위험해요. 상대가 먼저 레벨 2를 찍을 것 같으면 미니언 웨이브 뒤로 빠지고, 진입 스킬이 빠진 쿨 동안 반격하세요.',
+    enchanter: '상대 서폿이 보호형이라 짧은 견제로는 체력 차이가 잘 안 나요. 보호막·회복 스킬이 빠진 직후에 딜교환을 몰아서 하세요.',
+    mage: '상대 서폿이 견제형이라 라인전 체력이 계속 깎여요. 부쉬와 미니언 뒤를 이용하고, 상대가 견제 스킬을 쓴 직후 거리를 좁히세요.',
+    peel: '상대 서폿이 수비형이라 원딜을 잡기 어려워요. 서폿 보호 스킬(방패·삼키기 등)을 먼저 빼게 만든 뒤 원딜을 노리세요.'
+  };
+  function synergy(adc, sup) {
+    const at = ADC_TYPE[adc], st = SUP_TYPE[sup];
+    if (!at || !st) return null;
+    const duo = DUO.has(adc + '|' + sup);
+    return { at, st, v: SYN[st][at] + (duo ? 1 : 0), duo };
+  }
+  // a: [우리 원딜, 우리 서폿], e: [상대 원딜, 상대 서폿], D: 챔피언 표
+  function bot(a, e, D) {
+    const [aa, as] = a, [ea, es] = e;
+    const sA = aa && as ? synergy(aa, as) : null, sE = ea && es ? synergy(ea, es) : null;
+    const lines = [];
+    let score = 0, n = 0;
+    if (sA) {
+      const lv = sA.v >= 2 ? '좋아요' : sA.v === 1 ? '보통이에요' : '잘 안 맞아요';
+      lines.push(`우리 바텀(${ADC_NAME[sA.at]} ${aa} + ${SUP_NAME[sA.st]} ${as}) 궁합은 ${lv}${sA.duo ? ' (자주 쓰이는 조합)' : ''}. ${SYN_TEXT[sA.st + '|' + sA.at]}`);
+    }
+    if (sE) lines.push(`상대 바텀(${ADC_NAME[sE.at]} ${ea} + ${SUP_NAME[sE.st]} ${es}): ${FOE_TEXT[sE.st]}`);
+    if (sA && sE) { score += (sA.v - sE.v) * 0.5; n++; }
+    const tri = as && es && SUP_TYPE[as] && SUP_TYPE[es] ? (TRI[SUP_TYPE[as]] || {})[SUP_TYPE[es]] || 0 : 0;
+    if (as && es && tri) {
+      score += tri * 0.8; n++;
+      lines.push(tri > 0
+        ? `서폿 상성은 ${SUP_NAME[SUP_TYPE[as]]} ${jo(as, '이', '가')} ${SUP_NAME[SUP_TYPE[es]]} ${es}에게 강해요. ${SUP_TYPE[as] === 'engage' ? `${es} 보호 스킬이 빠진 직후 진입하면 막을 수단이 없어요.` : SUP_TYPE[as] === 'enchanter' ? `${es} 견제를 회복·보호막으로 버티면 상대가 할 게 없어요.` : SUP_TYPE[as] === 'mage' ? `${es} 진입 스킬 사거리 밖에서 견제하면 상대가 다가오지 못해요.` : `${es} 진입을 ${as}가 받아내면 반격 각이 나와요.`.replace(`${as}가`, jo(as, '이', '가'))}`
+        : `서폿 상성은 ${SUP_NAME[SUP_TYPE[es]]} ${jo(es, '이', '가')} ${SUP_NAME[SUP_TYPE[as]]} ${as}에게 강해요. ${SUP_TYPE[es] === 'engage' ? `${es} 진입 스킬을 먼저 빼게 만들고, 그 전엔 미니언 뒤에 서세요.` : SUP_TYPE[es] === 'enchanter' ? `${es} 회복·보호막이 빠진 순간에만 딜교환하세요.` : `${es} 견제를 맞지 않게 부쉬와 미니언 뒤를 쓰고, 상대 견제 스킬이 빠지면 거리를 좁히세요.`}`);
+    }
+    if (aa && as && ea && es && D[aa] && D[as] && D[ea] && D[es]) {
+      const early = (D[aa][0] + D[as][0]) - (D[ea][0] + D[es][0]);
+      score += early * 0.6; n++;
+      if (early >= 1.5) lines.push('초반 2:2 힘은 우리가 강해요. 첫 웨이브 3번째 근접 미니언까지 먼저 잡아 레벨 2를 선점하고, 2레벨이 되는 순간 같이 들어가세요.');
+      else if (early <= -1.5) lines.push('초반 2:2 힘은 상대가 강해요. 첫 웨이브는 포탑 쪽으로 당겨 받고, 상대가 레벨 2를 먼저 찍는 순간 뒤로 빠지세요. 정글이 바텀에 올 때까지 버티는 게 목표예요.');
+      else lines.push('초반 2:2 힘은 비슷해요. 레벨 2를 먼저 찍는 쪽이 주도권을 가지니 첫 웨이브 막타를 놓치지 마세요.');
+      const late = D[aa][2] - D[ea][2];
+      if (late >= 1.5) lines.push(`후반은 ${aa} 쪽이 더 강해요. 라인전에서 크게 지지만 않으면 시간이 우리 편이에요.`);
+      else if (late <= -1.5) lines.push(`후반은 ${jo(ea, '이', '가')} 더 강해요. 라인전 이득으로 바텀 1차 포탑과 첫 용을 일찍 가져가세요.`);
+    }
+    const verdict = n === 0 ? 0 : score >= 0.8 ? 1 : score <= -0.8 ? -1 : 0;
+    return { score: Math.round(score * 10) / 10, verdict, lines, synA: sA, synE: sE, known: n > 0 };
+  }
+
+  const api = { gen, handVerdict, jo, bot, synergy, ADC_TYPE, SUP_TYPE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MATCHUP = api;
 })(this);
