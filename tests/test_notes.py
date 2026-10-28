@@ -24,6 +24,20 @@ class NotesTest(unittest.TestCase):
         extra = set(out["champions"]) - page_champions()
         self.assertFalse(extra, f"페이지에 없는 이름: {sorted(extra)}")
 
+    def test_every_lane_has_setup_and_lane_notes(self):
+        src = (ROOT / "index.html").read_text(encoding="utf-8")
+        block = re.search(r"const R=\{(.*?)\n\};", src, re.S).group(1)
+        lanes = {k: v.split(",") for k, v in re.findall(r'(\w+):"([^"]+)"', block)}
+        out = build_notes.build()
+        missing = [f"{ln} {c}" for ln, cs in lanes.items() for c in cs if c not in out["setup"][ln]]
+        self.assertFalse(missing, f"기본 세팅이 없는 포지션: {missing}")
+        where = {}
+        for ln, cs in lanes.items():
+            for c in cs:
+                where.setdefault(c, []).append(ln)
+        thin = [c for c, ls in where.items() if len(ls) > 1 and sum(f"{c}|{ln}" in out["lanes"] for ln in ls) < len(ls) - 1]
+        self.assertFalse(thin, f"여러 포지션인데 포지션별 문장이 부족한 챔피언: {thin}")
+
     def test_script_version_matches_page(self):
         src = (ROOT / "index.html").read_text(encoding="utf-8")
         ver = re.search(r"PAGE_VERSION='([^']+)'", src).group(1)

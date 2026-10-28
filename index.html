@@ -275,7 +275,7 @@ details.fold[open] .ssum{display:none}
 
 <datalist id="champs"></datalist>
 
-<script src="matchup.js?v=2026.10.27.14"></script>
+<script src="matchup.js?v=2026.10.28.1"></script>
 <script>
 // [초반(0-10), 중반(10-20), 후반(30+), 한타, 태그] 태그: E 이니시, F 앞라인, P 보호, S 스플릿, M 마법피해, A 물리피해
 const D={
@@ -295,7 +295,7 @@ TOP:"니코,라이즈,리산드라,베인,뽀삐,스웨인,신지드,아크샨,�
 JGL:"뽀삐,샤코,아이번,오공,이블린,케인,키아나,리신,엘리스,신짜오,렉사이,자르반 4세,바이,니달리,렝가,워윅,브라이어,스카너,탈리야,올라프,트런들,녹턴,그레이브즈,킨드레드,카직스,에코,비에고,세주아니,헤카림,다이애나,우디르,누누와 윌럼프,마스터 이,벨베스,쉬바나,릴리아,아무무,자크,람머스,피들스틱,카서스,그라가스,볼리베어,마오카이,그웬,사일러스",
 MID:"나피리,니코,라이즈,리산드라,벨코즈,세라핀,스웨인,아크샨,애니비아,조이,직스,질리언,카시오페아,키아나,하이머딩거,멜,오로라,르블랑,탈론,사일러스,제드,애니,카타리나,트위스티드 페이트,신드라,아리,피즈,럭스,제라스,갈리오,흐웨이,말자하,벡스,오리아나,아지르,빅토르,코르키,카사딘,베이가,아우렐리온 솔,스몰더,트리스타나,야스오,요네,아칼리,판테온,럼블,블라디미르,다이애나,에코,탈리야,제이스,브랜드",
 ADC:"베인,사미라,세라핀,스웨인,직스,드레이븐,루시안,칼리스타,미스 포츈,케이틀린,애쉬,이즈리얼,진,바루스,자야,닐라,시비르,카이사,징크스,제리,아펠리오스,트위치,코그모,유나라,스몰더,트리스타나,세나",
-SUP:"니코,바드,벨코즈,뽀삐,샤코,세라핀,스웨인,질리언,하이머딩거,멜,파이크,쓰레쉬,블리츠크랭크,레오나,노틸러스,알리스타,렐,라칸,브라움,소라카,레나타 글라스크,룰루,유미,잔나,나미,밀리오,모르가나,세나,카르마,브랜드,자이라,소나,타릭,마오카이,쉔,판테온,럭스,제라스,갈리오,세트,탐 켄치,말파이트"
+SUP:"니코,바드,벨코즈,뽀삐,샤코,세라핀,스웨인,질리언,하이머딩거,멜,파이크,쓰레쉬,블리츠크랭크,레오나,노틸러스,알리스타,렐,라칸,브라움,소라카,레나타 글라스크,룰루,유미,잔나,나미,밀리오,모르가나,세나,카르마,브랜드,자이라,소나,타릭,마오카이,쉔,판테온,럭스,제라스,갈리오,세트,탐 켄치,말파이트,아이번"
 };
 Object.keys(R).forEach(k=>R[k]=R[k].split(',').filter(n=>D[n]));
 const DEFAULT_POOL={SUP:"파이크, 쓰레쉬, 블리츠크랭크, 소라카, 레나타 글라스크, 노틸러스, 알리스타, 마오카이, 룰루, 유미, 쉔"};
@@ -306,7 +306,7 @@ const PH=["0~10분","10~20분","20~30분","30분 이후"];
 const $=id=>document.getElementById(id);
 const norm=s=>s.replace(/\s+/g,'').toLowerCase();
 // 페이지를 고칠 때마다 올리는 버전 (날짜.번호)
-const PAGE_VERSION='2026.10.27.14';
+const PAGE_VERSION='2026.10.28.1';
 let HELPER_VER=null;
 function updateVer(){
   const el=document.getElementById('verLine');if(!el)return;
@@ -566,6 +566,12 @@ function rolePlan(an,ap,en,r){
     p.forEach((t,i)=>{const n=note(me,phases[i]);if(n)p[i]=`${t}<br><span class="tip-c">${me}: ${n}</span>`;});
     const sp=note(me,'spike');
     if(sp)p.unshift(`강해지는 시점: ${sp}${tag(me)}`);
+    const su=setupOf(me);
+    if(su)p.unshift(`${lane} ${me} 기본 세팅: ${su}<br><span class="note">아이템·룬은 게임 안 추천을 기본으로 쓰고, 아래 '이번 판 아이템·위치'에 맞춰 골라주세요.</span>`);
+    if(window.MATCHUP&&MATCHUP.adapt&&MU){
+      const ad=MATCHUP.adapt(me,lane,an,en,D,MU.traits);
+      if(ad.length)p.push(`이번 판 아이템·위치<br>${ad.map(l=>`· ${l}`).join('<br>')}`);
+    }
     if(myLane&&!myLane.missing){
       if(myLane.avg>=56&&note(me,'ahead'))p.push(`라인이 유리할 때: ${note(me,'ahead')}`);
       else if(myLane.avg<=44&&note(me,'behind'))p.push(`라인이 불리할 때: ${note(me,'behind')}`);
@@ -578,11 +584,12 @@ function rolePlan(an,ap,en,r){
     }
     const foes=MY===4?[en[4],en[3]]:MY===3?[en[3],en[4]]:[en[MY]];
     for(const f of foes.filter(Boolean)){
-      const m=MU&&window.MATCHUP&&MATCHUP.gen&&f!==me?MATCHUP.gen(me,f,{D,T:MU.traits,pair:MU.pairs[me+'|'+f],note,stat:matchup(me,f,MY),role:lane}):null;
+      const fs=en.indexOf(f),fnote=(c,fld)=>note(c,fld,c===f?fs:MY);
+      const m=MU&&window.MATCHUP&&MATCHUP.gen&&f!==me?MATCHUP.gen(me,f,{D,T:MU.traits,pair:MU.pairs[me+'|'+f],note:fnote,stat:matchup(me,f,MY),role:lane}):null;
       if(m&&m.lines.length){
         const v=['불리','비슷','유리'][m.verdict+1],col=m.verdict>0?'var(--ok)':m.verdict<0?'var(--enemy)':'var(--warn)';
         p.push(`vs ${f} <span class="pill" style="color:${col}">라인전 ${v}</span>${tag(f)}<br>${m.lines.map(l=>`· ${l}`).join('<br>')}`);
-      }else{const a=note(f,'against');if(a)p.push(`상대 ${f} 주의: ${a}${tag(f)}`);}
+      }else{const a=note(f,'against',fs);if(a)p.push(`상대 ${f} 주의: ${a}${tag(f)}`);}
     }
   }
   return p;
@@ -951,11 +958,20 @@ loadRoster();
 // ---- 챔피언별 상황 문장: 브라우저에 저장해두고, 서버 버전이 바뀌면 새로 받음
 let NOTES=null;
 function setNotes(n){if(n&&n.champions&&n.fields){NOTES=n;NOTES.idx=Object.fromEntries(n.fields.map((f,i)=>[f,i]));NOTES.norm={};for(const k of Object.keys(n.champions))NOTES.norm[norm(k)]=k;return true;}return false;}
-function note(c,field){
+// laneIdx 포지션 전용 문장이 있으면 그걸, 없으면 기본 문장 (예: 서폿 샤코 / 정글 샤코)
+function note(c,field,laneIdx){
   if(!NOTES||!c)return '';
   const k=NOTES.champions[c]?c:NOTES.norm[norm(c)];
-  const row=k&&NOTES.champions[k];
+  if(!k)return '';
+  const ln=LANES[laneIdx===undefined?MY:laneIdx];
+  const row=(NOTES.lanes&&NOTES.lanes[k+'|'+ln])||NOTES.champions[k];
   return row?row[NOTES.idx[field]]||'':'';
+}
+function setupOf(c,laneIdx){
+  if(!NOTES||!NOTES.setup||!c)return '';
+  const k=NOTES.champions[c]?c:NOTES.norm[norm(c)];
+  const s=NOTES.setup[LANES[laneIdx===undefined?MY:laneIdx]];
+  return (k&&s&&s[k])||'';
 }
 async function loadNotes(){
   try{const cached=JSON.parse(store.get('pr.notes')||'null');if(setNotes(cached))render();}catch(e){}

@@ -179,7 +179,55 @@
     return { score: Math.round(score * 10) / 10, verdict, lines, synA: sA, synE: sE, known: n > 0 };
   }
 
-  const api = { gen, handVerdict, jo, bot, synergy, ADC_TYPE, SUP_TYPE };
+  // ---------------------------------------------------------------- 이번 판 아이템·위치 방향
+  // me: 내 챔피언, lane: 'TOP'.., allies/enemies: 이름 배열, D: 챔피언 표, T: 특성표
+  function adapt(me, lane, allies, enemies, D, T) {
+    if (!me || !D[me]) return [];
+    const tg = D[me][4] || '', tm = T[me] || [2, 1, 1, 1, 1, 1];
+    const en = enemies.filter(c => c && D[c]);
+    if (!en.length) return [];
+    const nm = a => a.slice(0, 3).join('·');
+    const tag = c => D[c][4] || '', tr = c => T[c] || [2, 1, 1, 1, 1, 1];
+    const ap = en.filter(c => tag(c).includes('M') && !tag(c).includes('A'));
+    const ad = en.filter(c => tag(c).includes('A') && !tag(c).includes('M'));
+    const assassins = en.filter(c => !tag(c).includes('F') && tr(c)[1] >= 3 && tr(c)[4] >= 3);
+    const tanks = en.filter(c => tag(c).includes('F'));
+    const healers = en.filter(c => tr(c)[3] >= 3 || (tr(c)[3] >= 2 && tr(c)[1] >= 3));
+    const cc = en.filter(c => tr(c)[5] >= 3);
+    const poke = en.filter(c => tr(c)[2] >= 3);
+    const isTank = tg.includes('F');
+    const supType = lane === 'SUP' ? SUP_TYPE[me] : null;
+    const isUtility = supType === 'enchanter';
+    const squishy = !isTank && (lane === 'ADC' || lane === 'MID' || supType === 'enchanter' || supType === 'mage' || tm[0] >= 3);
+    const dealer = !isTank && !isUtility;
+    const out = [];
+    // 방어 아이템 방향
+    if (isTank || (!squishy && !isUtility)) {
+      if (ap.length >= 3 && ad.length <= 2) out.push(`상대에 마법 피해 챔피언이 많아요(${nm(ap)}). 상대 물리 딜러가 크게 성장하지 않았다면 마법 저항 위주로 방어 아이템을 가세요.`);
+      else if (ad.length >= 3 && ap.length <= 2) out.push(`상대에 물리 피해 챔피언이 많아요(${nm(ad)}). 상대 마법 딜러가 크게 성장하지 않았다면 방어력 위주로 방어 아이템을 가세요.`);
+      else out.push('상대 피해가 물리·마법으로 섞여 있어요. 체력 위주로 가다가, 가장 크게 성장한 적의 피해 종류에 맞춰 방어 아이템을 고르세요.');
+    }
+    // 물몸: 암살자·돌진
+    if (squishy && assassins.length >= 2) out.push(`상대에 암살자·돌진 챔피언이 많아요(${nm(assassins)}). 앞으로 나가면 순식간에 죽을 수 있으니 아군 앞라인 뒤에서 안전하게 위치를 잡고, 생존 아이템 하나를 일찍 고려하세요.`);
+    else if (squishy && assassins.length === 1) out.push(`${jo(assassins[0], '이', '가')} 시야에서 사라지면 바로 아군 쪽으로 붙으세요. 혼자 사이드나 정글에 서 있으면 노려져요.`);
+    // 회복
+    if (dealer && healers.length) out.push(`상대에 회복이 큰 챔피언이 있어요(${nm(healers)}). 치유 감소 아이템을 하나 섞으세요.`);
+    // 단단한 상대
+    if (dealer && tanks.length >= 2) out.push(`상대 앞라인이 단단해요(${nm(tanks)}). 체력 비례 피해나 관통 아이템을 섞어야 딜이 들어가요.`);
+    // CC
+    if (squishy && cc.length >= 3) out.push(`상대 CC가 많아요(${nm(cc)}). 강인함 신발이나 CC 해제 수단을 고려하고, 한 번 묶이면 끝나니 핵심 CC가 빠진 걸 보고 앞으로 나가세요.`);
+    // 견제
+    if (poke.length >= 3) out.push(isUtility ? `상대 견제가 강해요(${nm(poke)}). 회복·보호막 아이템 효율이 좋아요. 한타 전엔 아군 체력을 먼저 채우세요.` : `상대 견제가 강해요(${nm(poke)}). 라인전엔 체력 물약을 넉넉히 사고, 한타 전엔 체력을 채운 뒤 들어가세요.`);
+    // 보호형 서폿: 아군 캐리 기준
+    if (isUtility) {
+      const carry = allies.filter(c => c && c !== me && D[c] && D[c][2] >= 5);
+      out.push(carry.length ? `가장 후반이 강한 아군(${nm(carry)}) 옆에 붙어서 보호막·회복을 그 아군에게 몰아주세요.` : '아군 중 가장 많이 성장한 딜러 옆에 붙어서 보호막·회복을 몰아주세요.');
+    }
+    if (isTank && assassins.length >= 2) out.push(`적 암살자(${nm(assassins)})가 아군 딜러를 노려요. 진입보다 아군 딜러 옆에서 받아치는 역할을 먼저 하세요.`);
+    return out.slice(0, 4);
+  }
+
+  const api = { gen, handVerdict, jo, bot, synergy, adapt, ADC_TYPE, SUP_TYPE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MATCHUP = api;
 })(this);
