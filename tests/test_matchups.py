@@ -16,7 +16,7 @@ class MatchupsTest(unittest.TestCase):
         out = build_matchups.build()
         saved = json.loads((ROOT / "data" / "matchups.json").read_text(encoding="utf-8"))
         self.assertEqual(saved["version"], out["version"])
-        self.assertEqual(len(saved["traits"]), 172)
+        self.assertEqual(len(saved["traits"]), 173)
 
     @unittest.skipUnless(shutil.which("node"), "node 없음")
     def test_every_pair_reads_well(self):
