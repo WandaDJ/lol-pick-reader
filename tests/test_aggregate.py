@@ -84,3 +84,27 @@ class PruneTest(unittest.TestCase):
         kept = collect.prune(recs, 2)
         self.assertEqual(sorted({r["patch"] for r in kept}), ["26.20", "26.21"])
         self.assertEqual(len(kept), 3)
+
+
+class BuildTest(unittest.TestCase):
+    def test_build_summary(self):
+        dd = {"spells": {"4": "점멸", "14": "점화"}, "runes": {"8112": "감전"},
+              "items": {"3089": {"name": "라바돈의 죽음모자", "tags": ["SpellDamage"], "completed": True},
+                        "1001": {"name": "장화", "tags": ["Boots"], "completed": False}}}
+        recs = []
+        for i in range(30):
+            m = fake_match(i, 30, i % 2 == 0, [(0, 0), (0, 0), (0, 0)])
+            for p in m["parts"]:
+                p.update({"spells": [14, 4], "key": 8112, "items": [3089, 1001]})
+            recs.append(m)
+        out = collect.aggregate(recs, {"ahri": "아리"}, ["26.21"], min_games=10, dd=dd)
+        b = out["champions"]["아리"]["MID"]["build"]
+        self.assertEqual(b["spells"], ["점멸+점화", 1.0])
+        self.assertEqual(b["keystone"], ["감전", 1.0])
+        self.assertEqual(b["itemDir"], ["AP"])
+        self.assertEqual(b["items"], ["라바돈의 죽음모자"])
+
+    def test_old_records_have_no_build(self):
+        recs = [fake_match(i, 30, True, [(0, 0), (0, 0), (0, 0)]) for i in range(30)]
+        out = collect.aggregate(recs, {}, ["26.21"], min_games=10, dd={"spells": {}, "runes": {}, "items": {}})
+        self.assertIsNone(out["champions"]["Ahri"]["MID"]["build"])

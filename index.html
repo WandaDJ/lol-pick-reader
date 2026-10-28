@@ -275,7 +275,7 @@ details.fold[open] .ssum{display:none}
 
 <datalist id="champs"></datalist>
 
-<script src="matchup.js?v=2026.10.28.2"></script>
+<script src="matchup.js?v=2026.10.28.3"></script>
 <script>
 // [초반(0-10), 중반(10-20), 후반(30+), 한타, 태그] 태그: E 이니시, F 앞라인, P 보호, S 스플릿, M 마법피해, A 물리피해
 const D={
@@ -306,7 +306,7 @@ const PH=["0~10분","10~20분","20~30분","30분 이후"];
 const $=id=>document.getElementById(id);
 const norm=s=>s.replace(/\s+/g,'').toLowerCase();
 // 페이지를 고칠 때마다 올리는 버전 (날짜.번호)
-const PAGE_VERSION='2026.10.28.2';
+const PAGE_VERSION='2026.10.28.3';
 let HELPER_VER=null;
 function updateVer(){
   const el=document.getElementById('verLine');if(!el)return;
@@ -967,11 +967,22 @@ function note(c,field,laneIdx){
   const row=(NOTES.lanes&&NOTES.lanes[k+'|'+ln])||NOTES.champions[k];
   return row?row[NOTES.idx[field]]||'':'';
 }
+// 기본 세팅: 최신 패치 경기 데이터(주문·핵심 룬·아이템 분류)가 30판 이상이면 그걸로, 아니면 직접 쓴 문장
 function setupOf(c,laneIdx){
-  if(!NOTES||!NOTES.setup||!c)return '';
-  const k=NOTES.champions[c]?c:NOTES.norm[norm(c)];
-  const s=NOTES.setup[LANES[laneIdx===undefined?MY:laneIdx]];
-  return (k&&s&&s[k])||'';
+  if(!c)return '';
+  const ln=LANES[laneIdx===undefined?MY:laneIdx];
+  const k=NOTES&&(NOTES.champions[c]?c:NOTES.norm[norm(c)]);
+  const hand=(k&&NOTES.setup&&NOTES.setup[ln]&&NOTES.setup[ln][k])||'';
+  const s=STATS&&STATS[norm(c)],b=s&&s[ln]&&s[ln].build;
+  if(!b||b.games<30)return hand;
+  const pct=x=>Math.round(x*100)+'%';
+  const parts=[];
+  if(b.spells)parts.push(`${b.spells[0]} (${pct(b.spells[1])})`);
+  if(b.keystone)parts.push(`핵심 룬 ${b.keystone[0]} (${pct(b.keystone[1])})`);
+  if(b.itemDir&&b.itemDir.length)parts.push(`아이템 ${b.itemDir.join('·')} 위주`+(b.items&&b.items.length?` (자주 가는 것: ${b.items.join(', ')})`:''));
+  const role=hand.split(' · ').slice(2).join(' · ');
+  if(role)parts.push(role);
+  return parts.join(' · ')+` <span class="note">(패치 ${(META.patches||[]).join(', ')} ${(META.tiers||[]).join('/')} ${b.games}판 기준)</span>`;
 }
 async function loadNotes(){
   try{const cached=JSON.parse(store.get('pr.notes')||'null');if(setNotes(cached))render();}catch(e){}

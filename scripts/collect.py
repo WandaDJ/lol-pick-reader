@@ -133,12 +133,18 @@ def compact(match: dict, timeline: dict | None) -> dict | None:
     parts = []
     for p in info.get("participants", []):
         pid = p.get("participantId")
+        styles = (p.get("perks") or {}).get("styles") or []
+        key = styles[0]["selections"][0]["perk"] if styles and styles[0].get("selections") else None
         parts.append({
             "champ": p.get("championName"),
             "pos": p.get("teamPosition") or "",
             "team": p.get("teamId"),
             "win": bool(p.get("win")),
             "gold": {str(m): g.get(pid) for m, g in gold_at.items() if g.get(pid) is not None},
+            # 빌드: 소환사 주문, 핵심 룬, 최종 아이템 (장신구 제외)
+            "spells": [p.get("summoner1Id"), p.get("summoner2Id")],
+            "key": key,
+            "items": [p.get(f"item{i}") for i in range(6) if p.get(f"item{i}")],
         })
     version = info.get("gameVersion", "")
     patch = ".".join(version.split(".")[:2])
@@ -218,15 +224,50 @@ def clamp(x: float, lo: float = 1.0, hi: float = 5.0) -> float:
     return max(lo, min(hi, x))
 
 
+ITEM_TAG_KO = {
+    "Health": "체력", "Armor": "방어력", "SpellBlock": "마법 저항", "SpellDamage": "AP", "Damage": "공격력",
+    "CriticalStrike": "치명타", "AttackSpeed": "공격 속도", "ArmorPenetration": "물리 관통",
+    "MagicPenetration": "마법 관통", "LifeSteal": "생명력 흡수", "AbilityHaste": "스킬 가속",
+    "CooldownReduction": "스킬 가속", "Mana": "마나", "ManaRegen": "마나 회복", "OnHit": "적중 효과",
+    "HealthRegen": "체력 재생",
+}
+
+
+def build_summary(b: dict, dd: dict | None) -> dict | None:
+    """챔피언·포지션 하나의 빌드 집계를 페이지용으로 정리 (데이터 드래곤 이름·분류 사용)."""
+    n = b["n"]
+    if not dd or n < 20:
+        return None
+    spells = dd.get("spells", {})
+    runes = dd.get("runes", {})
+    items = dd.get("items", {})
+    out = {"games": n}
+    if b["spells"]:
+        pair, c = b["spells"].most_common(1)[0]
+        names = [spells.get(str(s), str(s)) for s in pair]
+        out["spells"] = ["+".join(names), round(c / n, 2)]
+    if b["key"]:
+        k, c = b["key"].most_common(1)[0]
+        out["keystone"] = [runes.get(str(k), str(k)), round(c / n, 2)]
+    if b["tags"]:
+        out["itemDir"] = [tag for tag, c in b["tags"].most_common(4) if c / n >= 0.3][:3]
+    if b["items"]:
+        out["items"] = [items[str(i)]["name"] for i, _ in b["items"].most_common(3) if str(i) in items]
+    return out
+
+
 def aggregate(records: list[dict], champ_names: dict[str, str], patches: list[str] | None = None,
-              min_games: int = 30) -> dict:
+              min_games: int = 30, dd: dict | None = None) -> dict:
     acc = collections.defaultdict(lambda: {
         "games": 0, "wins": 0,
         "gd10": [0.0, 0], "gain20": [0.0, 0], "gain30": [0.0, 0],
         "len": {b[0]: [0, 0] for b in LENGTH_BUCKETS},
         "long": [0, 0],
         "vs": collections.defaultdict(lambda: [0, 0]),
+        "build": {"n": 0, "spells": collections.Counter(), "key": collections.Counter(),
+                  "items": collections.Counter(), "tags": collections.Counter()},
     })
+    item_info = (dd or {}).get("items", {})
     used = 0
     for rec in records:
         if patches and rec["patch"] not in patches:
@@ -248,6 +289,21 @@ def aggregate(records: list[dict], champ_names: dict[str, str], patches: list[st
             if minutes >= 30:
                 a["long"][0] += 1
                 a["long"][1] += p["win"]
+            if "spells" in p:  # 빌드 정보가 있는 경기만 (예전 캐시 경기는 없음)
+                b = a["build"]
+                b["n"] += 1
+                if all(p["spells"]):
+                    b["spells"][tuple(sorted(p["spells"]))] += 1
+                if p.get("key"):
+                    b["key"][p["key"]] += 1
+                tags = set()
+                for it in p.get("items", []):
+                    info = item_info.get(str(it))
+                    if info and info.get("completed"):
+                        b["items"][it] += 1
+                        tags.update(ITEM_TAG_KO[x] for x in info.get("tags", []) if x in ITEM_TAG_KO)
+                for tg in tags:
+                    b["tags"][tg] += 1
             if not opp:
                 continue
             vs = a["vs"][opp["champ"]]
@@ -288,6 +344,7 @@ def aggregate(records: list[dict], champ_names: dict[str, str], patches: list[st
             "gd30": round(mean(a["gd10"]) + mean(a["gain20"]) + mean(a["gain30"])),
             "wrByLength": {k: {"games": v[0], "winRate": round(v[1] / v[0], 4) if v[0] else None} for k, v in a["len"].items()},
             "phase": phase,
+            "build": build_summary(a["build"], dd),
             # 맞라이너별 [판수, 승수] (5판 이상만)
             "vs": {champ_names.get(o.lower(), o): v for o, v in sorted(a["vs"].items(), key=lambda kv: -kv[1][0])
                    if v[0] >= 5},
@@ -305,6 +362,27 @@ def korean_names() -> tuple[dict[str, str], str]:
     names = {v["id"].lower(): v["name"] for v in data.values()}
     names["fiddlesticks"] = names.get("fiddlesticks", "피들스틱")
     return names, version
+
+
+def ddragon_data(version: str) -> dict:
+    """소환사 주문·핵심 룬·아이템 이름과 아이템 분류 (라이엇 공식 Data Dragon)."""
+    def j(url):
+        with urllib.request.urlopen(url, timeout=30) as r:
+            return json.loads(r.read().decode("utf-8"))
+    base = f"https://ddragon.leagueoflegends.com/cdn/{version}/data/ko_KR"
+    spells = {v["key"]: v["name"] for v in j(f"{base}/summoner.json")["data"].values()}
+    runes = {}
+    for tree in j(f"{base}/runesReforged.json"):
+        for slot in tree.get("slots", [])[:1]:  # 첫 줄이 핵심 룬
+            for r in slot.get("runes", []):
+                runes[str(r["id"])] = r["name"]
+    items = {}
+    for iid, v in j(f"{base}/item.json")["data"].items():
+        tags = v.get("tags", [])
+        completed = (not v.get("into")) and v.get("gold", {}).get("total", 0) >= 2000 and "Boots" not in tags \
+            and "Consumable" not in tags and "Trinket" not in tags
+        items[iid] = {"name": v.get("name", iid), "tags": tags, "completed": completed}
+    return {"spells": spells, "runes": runes, "items": items}
 
 
 def main(argv=None):
@@ -344,7 +422,12 @@ def main(argv=None):
         patches = latest if n_latest >= 4000 else ordered[-2:]
 
     names, dd_version = korean_names()
-    result = aggregate(records, names, patches, args.min_games)
+    try:
+        dd = ddragon_data(dd_version)
+    except Exception as e:  # 빌드 정보만 빠지고 나머지는 그대로
+        print(f"Data Dragon 빌드 정보를 못 받았어요: {e}")
+        dd = None
+    result = aggregate(records, names, patches, args.min_games, dd)
     out = {
         "meta": {
             "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
