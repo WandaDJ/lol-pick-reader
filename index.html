@@ -277,7 +277,7 @@ details.fold[open] .ssum{display:none}
 
 <datalist id="champs"></datalist>
 
-<script src="matchup.js?v=2026.10.28.5"></script>
+<script src="matchup.js?v=2026.10.28.6"></script>
 <script>
 // [초반(0-10), 중반(10-20), 후반(30+), 한타, 태그] 태그: E 이니시, F 앞라인, P 보호, S 스플릿, M 마법피해, A 물리피해
 const D={
@@ -308,7 +308,7 @@ const PH=["0~10분","10~20분","20~30분","30분 이후"];
 const $=id=>document.getElementById(id);
 const norm=s=>s.replace(/\s+/g,'').toLowerCase();
 // 페이지를 고칠 때마다 올리는 버전 (날짜.번호)
-const PAGE_VERSION='2026.10.28.5';
+const PAGE_VERSION='2026.10.28.6';
 let HELPER_VER=null;
 function updateVer(){
   const el=document.getElementById('verLine');if(!el)return;
@@ -689,20 +689,29 @@ function classOf(c,laneIdx){
   const tg=(D[c]||[,,,,''])[4];
   return tg.includes('F')?'xtank':tg.includes('E')?'xfighter':tg.includes('M')?'xap':'xad';
 }
+// 주 성향 80% + 보조 성향 20%(최대 2개, 나눠서). 상성 계산엔 안 쓰고 메타·내 성향 보정에만 써요.
+function classesOf(c,laneIdx){
+  const ln=LANES[laneIdx];
+  if(window.MATCHUP&&MATCHUP.laneTypes){const t=MATCHUP.laneTypes(c,ln);if(t)return t;}
+  return [{k:classOf(c,laneIdx),w:1}];
+}
+// 표본 집계용: 주 성향은 1판, 보조 성향은 0.5판으로 셈
+const cntW=t=>t.w>=0.8?1:0.5;
 let CLASS_WR=null;
 function buildClassWr(){
   CLASS_WR={};if(!STATS)return;
   for(const name of NAMES){const s=STATS[norm(name)];if(!s)continue;
-    LANES.forEach((ln,i)=>{const r=s[ln];if(!r||!r.games)return;const k=ln+'|'+classOf(name,i);
-      const o=CLASS_WR[k]||(CLASS_WR[k]={games:0,wins:0});o.games+=r.games;o.wins+=r.games*r.winRate;});}
+    LANES.forEach((ln,i)=>{const r=s[ln];if(!r||!r.games)return;
+      for(const t of classesOf(name,i)){const k=ln+'|'+t.k,m=cntW(t);
+        const o=CLASS_WR[k]||(CLASS_WR[k]={games:0,wins:0});o.games+=r.games*m;o.wins+=r.games*r.winRate*m;}});}
 }
 function metaAge(){const g=META&&META.generated?Date.parse(META.generated):NaN;return isNaN(g)?Infinity:(Date.now()-g)/864e5;}
 function metaWeight(){const d=metaAge();return d<=21?1:d<=45?0.5:0;}  // 오래된 통계는 덜 믿음
 function metaOf(c,laneIdx){
   if(!STATS)return null;
   if(!CLASS_WR)buildClassWr();
-  const cls=classOf(c,laneIdx),cw=CLASS_WR[LANES[laneIdx]+'|'+cls];
-  const clsWr=cw?(cw.wins+0.5*2000)/(cw.games+2000):0.5;
+  const ts=classesOf(c,laneIdx),cls=ts[0].k,cw=CLASS_WR[LANES[laneIdx]+'|'+cls];
+  const clsWr=ts.reduce((a,t)=>{const o=CLASS_WR[LANES[laneIdx]+'|'+t.k];return a+t.w*(o?(o.wins+0.5*2000)/(o.games+2000):0.5);},0);
   const s=STATS[norm(c)],r=s&&s[LANES[laneIdx]];
   const games=r?r.games:0,wins=r?r.games*r.winRate:0;
   const wr=(wins+clsWr*300)/(games+300);
@@ -723,15 +732,21 @@ function renderMetaNote(){
 function playedOf(laneIdx){try{return JSON.parse(store.get('pr.played.'+LANES[laneIdx])||'{}')}catch(e){return {}}}
 function styleOf(laneIdx){
   const rows=playedOf(laneIdx),by={};let games=0,wins=0;
-  for(const [c,d] of Object.entries(rows)){if(!D[c])continue;const k=classOf(c,laneIdx),o=by[k]||(by[k]={games:0,wins:0,champs:[]});
-    o.games+=d.games;o.wins+=d.wins;o.champs.push(c);games+=d.games;wins+=d.wins;}
+  for(const [c,d] of Object.entries(rows)){if(!D[c])continue;
+    for(const t of classesOf(c,laneIdx)){const o=by[t.k]||(by[t.k]={games:0,wins:0,champs:[]}),m=cntW(t);
+      o.games+=d.games*m;o.wins+=d.wins*m;o.champs.push(c);}
+    games+=d.games;wins+=d.wins;}
   return {by,games,wins,wr:games?wins/games:0.5};
 }
 function styleFit(c,laneIdx){
   const s=styleOf(laneIdx);if(s.games<20)return null;
-  const k=classOf(c,laneIdx),o=s.by[k];if(!o||o.games<5)return null;
-  const base=(s.wins+10)/(s.games+20),mine=(o.wins+0.5*15)/(o.games+15);
-  return {cls:k,games:o.games,wr:o.wins/o.games,aff:mine-base};
+  // 성향마다 (내 성향 승률 - 내 전체 승률)을 주 80%·보조 20%로 섞음. 5판 안 된 성향은 0으로 봄
+  const base=(s.wins+10)/(s.games+20);let aff=0,top=null;
+  for(const t of classesOf(c,laneIdx)){const o=s.by[t.k];if(!o||o.games<5)continue;
+    const a=(o.wins+0.5*15)/(o.games+15)-base;aff+=t.w*a;
+    if(!top||Math.abs(t.w*a)>Math.abs(top.part))top={cls:t.k,games:o.games,wr:o.wins/o.games,part:t.w*a};}
+  if(!top)return null;
+  return {cls:top.cls,games:Math.round(top.games),wr:top.wr,aff};
 }
 function renderStyleNote(){
   const el=$('styleNote');if(!el)return;
@@ -739,14 +754,14 @@ function renderStyleNote(){
   $('copyStyle').hidden=!Object.keys(LANES.reduce((a,l,i)=>Object.assign(a,playedOf(i)),{})).length;
   if(s.games<20){el.textContent=s.games?`내 성향 반영 안 됨: 최근 전적에서 ${ln} ${s.games}판이라 20판부터 반영해요.`:'';return;}
   const rows=Object.entries(s.by).filter(([k,o])=>o.games>=5).sort((a,b)=>b[1].wins/b[1].games-a[1].wins/a[1].games);
-  el.textContent=`내 성향 반영: 최근 ${ln} ${s.games}판 승률 ${Math.round(s.wr*100)}% · `+rows.map(([k,o])=>`${CLS_NAME[k]||k} ${Math.round(o.wins/o.games*100)}% (${o.games}판)`).join(', ')+' · 잘 맞는 성향의 챔피언은 해본 적이 적어도 점수를 더 받아요.';
+  el.textContent=`내 성향 반영: 최근 ${ln} ${s.games}판 승률 ${Math.round(s.wr*100)}% · `+rows.map(([k,o])=>`${CLS_NAME[k]||k} ${Math.round(o.wins/o.games*100)}% (${Math.round(o.games)}판)`).join(', ')+' · 잘 맞는 성향의 챔피언은 해본 적이 적어도 점수를 더 받아요.';
 }
 function styleSummary(){
   const out=['[픽창 판독기 내 플레이 요약]'];
   LANES.forEach((ln,i)=>{const rows=Object.entries(playedOf(i)).sort((a,b)=>b[1].games-a[1].games);if(!rows.length)return;
     const s=styleOf(i);
     out.push(`${ln} ${s.games}판 승률 ${Math.round(s.wr*100)}%`);
-    out.push('  성향: '+Object.entries(s.by).sort((a,b)=>b[1].games-a[1].games).map(([k,o])=>`${CLS_NAME[k]||k} ${o.games}판 ${Math.round(o.wins/o.games*100)}%`).join(', '));
+    out.push('  성향: '+Object.entries(s.by).sort((a,b)=>b[1].games-a[1].games).map(([k,o])=>`${CLS_NAME[k]||k} ${Math.round(o.games)}판 ${Math.round(o.wins/o.games*100)}%`).join(', '));
     out.push('  챔피언: '+rows.map(([c,d])=>`${c} ${d.games}판 ${d.wins}승`).join(', '));});
   return out.join('\n');
 }

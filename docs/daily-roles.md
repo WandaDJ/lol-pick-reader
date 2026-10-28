@@ -32,7 +32,7 @@ python scripts/missing_roles.py
 3. `data/traits.json`: `[사거리 1~3, 올인, 견제, 회복, 기동성, CC]` (0~3)
 4. `data/notes/7.json` (없으면 만들기): 기본 문장 7줄. 챔피언 이름은 통계·Data Dragon의 한국어 이름과 같게(띄어쓰기는 상관없음)
 5. 기본 세팅: 2번과 같은 방법.
-6. 성향: `matchup.js`에서 탑·정글·미드는 `LANE_TYPE`(`put('TOP', ...)` 줄), 원딜·서폿은 `ADC_TYPE`·`SUP_TYPE`에 추가해요.
+6. 성향: `matchup.js`에서 탑·정글·미드는 `LANE_TYPE`(`put('TOP', ...)` 줄), 원딜·서폿은 `ADC_TYPE`·`SUP_TYPE`에 주 성향을 추가해요. 두 역할을 실제로 하는 챔피언이면 `SUB_TYPE`(`sub('TOP', ...)` 줄)에 보조 성향을 최대 2개까지 넣어요(예: `사일러스:mcarry`). 상성 계산은 주 성향만 쓰고, 추천 점수의 메타·내 성향 보정에서 주 80%·보조 20%로 섞여요.
 
 ## 4. 문장 규칙
 

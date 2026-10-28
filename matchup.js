@@ -241,18 +241,49 @@
   put('MID', 'assassin:나피리,탈론,제드,르블랑,카타리나,피즈,아칼리,키아나,에코,카사딘,다이애나,트리스타나' +
     '/control:리산드라,애니비아,오리아나,빅토르,아지르,신드라,카시오페아,흐웨이,말자하,아우렐리온 솔,애니,블라디미르,라이즈,오로라,멜,베이가,럼블,탈리야,세라핀,니코,벡스' +
     '/mpoke:제라스,럭스,벨코즈,직스,조이,코르키,하이머딩거,질리언,브랜드,제이스,스몰더' +
-    '/roam:사일러스,요네,야스오,판테온,갈리오,트위스티드 페이트,아리,아크샨,스웨인');
+    '/roam:사일러스,판테온,갈리오,트위스티드 페이트,아리,아크샨,스웨인' +
+    '/mcarry:야스오,요네');
   // 포지션 성향 이름 (페이지 표시용)
   const TYPE_NAME = { engage: '진입형', enchanter: '보호형', mage: '견제형', peel: '수비형', allin: '올인형', poke: '견제형', hyper: '후반형',
     tank: '탱커', bruiser: '전사', duelist: '결투형', ranged: '원거리·메이지', jtank: '탱커·이니시', warrior: '교전형', jassassin: '암살자', farm: '성장형',
-    assassin: '암살자', control: '한타 메이지', mpoke: '견제 메이지', roam: '로밍형' };
+    assassin: '암살자', control: '한타 메이지', mpoke: '견제 메이지', roam: '로밍형', mcarry: '근접 캐리' };
+  // 보조 성향 (최대 2개): 두 역할을 실제로 하는 챔피언만. 상성 계산(바텀 2:2 등)은 주 성향만 쓰고,
+  // 내 성향 보정·메타 보정에서만 주 80% + 보조 20%(보조끼리 나눔)로 섞어요.
+  const SUB_TYPE = { TOP: {}, JGL: {}, MID: {}, ADC: {}, SUP: {} };
+  const sub = (ln, s) => s.split('/').forEach(g => { const [n, v] = g.split(':'); SUB_TYPE[ln][n] = v.split(','); });
+  sub('TOP', '크산테:duelist/그라가스:bruiser/뽀삐:bruiser/탐 켄치:bruiser/문도 박사:bruiser' +
+    '/다리우스:duelist/아트록스:duelist/가렌:duelist/세트:tank/나르:ranged,tank/볼리베어:tank/우르곳:duelist/일라오이:duelist' +
+    '/올라프:duelist/암베사:duelist/모데카이저:duelist/워윅:duelist/트런들:duelist' +
+    '/리븐:bruiser/이렐리아:bruiser/카밀:bruiser/잭스:bruiser/요릭:bruiser/나서스:tank/그웬:bruiser' +
+    '/퀸:duelist/제이스:bruiser/베인:duelist/갱플랭크:duelist/케일:duelist/블라디미르:duelist/럼블:bruiser/리산드라:tank/스웨인:tank');
+  sub('JGL', '자르반 4세:warrior/스카너:warrior/그라가스:warrior/뽀삐:warrior' +
+    '/리신:jassassin/바이:jtank/비에고:farm/헤카림:jtank/트런들:jtank/볼리베어:jtank/우디르:farm/쉬바나:farm/오공:jtank' +
+    '/케인:warrior/녹턴:warrior/니달리:farm/다이애나:warrior/사일러스:warrior' +
+    '/마스터 이:jassassin/그레이브즈:warrior/벨베스:warrior/그웬:warrior');
+  sub('MID', '사일러스:mcarry/아리:assassin/트위스티드 페이트:control/갈리오:control/판테온:assassin/아크샨:assassin/스웨인:control' +
+    '/야스오:roam/요네:roam' +
+    '/탈론:roam/르블랑:roam/아칼리:mcarry/나피리:roam/키아나:roam/에코:roam/다이애나:control' +
+    '/빅토르:mpoke/아지르:mpoke/신드라:assassin/흐웨이:mpoke/애니:assassin/리산드라:roam/오로라:assassin/멜:mpoke/탈리야:roam/세라핀:mpoke/벡스:assassin' +
+    '/럭스:control/벨코즈:control/조이:assassin/브랜드:control');
+  sub('ADC', '카이사:allin/사미라:hyper/트리스타나:hyper/베인:allin/트위치:allin/닐라:hyper' +
+    '/이즈리얼:hyper/세나:hyper/시비르:hyper/미스 포츈:poke/스몰더:poke/아펠리오스:poke');
+  sub('SUP', '쓰레쉬:peel/알리스타:peel/라칸:enchanter/갈리오:peel/뽀삐:peel/마오카이:peel/니코:mage/스웨인:engage' +
+    '/브라움:engage/탐 켄치:engage/타릭:enchanter,engage/쉔:engage' +
+    '/룰루:peel/잔나:peel/밀리오:peel/레나타 글라스크:peel/아이번:peel/카르마:mage/질리언:mage/소나:mage/나미:mage/바드:engage' +
+    '/모르가나:enchanter/세라핀:enchanter/세나:enchanter/럭스:enchanter');
   function laneType(c, lane) {
     if (lane === 'SUP') return SUP_TYPE[c] || null;
     if (lane === 'ADC') return ADC_TYPE[c] || null;
     return (LANE_TYPE[lane] || {})[c] || null;
   }
+  // 주 성향 + 보조 성향 가중치: [{k, w}] (보조가 없으면 주 성향 100%)
+  function laneTypes(c, lane) {
+    const p = laneType(c, lane); if (!p) return null;
+    const subs = ((SUB_TYPE[lane] || {})[c] || []).filter(k => k !== p);
+    return subs.length ? [{ k: p, w: 0.8 }, ...subs.map(k => ({ k, w: 0.2 / subs.length }))] : [{ k: p, w: 1 }];
+  }
 
-  const api = { gen, handVerdict, jo, bot, synergy, adapt, laneType, LANE_TYPE, TYPE_NAME, ADC_TYPE, SUP_TYPE };
+  const api = { gen, handVerdict, jo, bot, synergy, adapt, laneType, laneTypes, SUB_TYPE, LANE_TYPE, TYPE_NAME, ADC_TYPE, SUP_TYPE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MATCHUP = api;
 })(this);

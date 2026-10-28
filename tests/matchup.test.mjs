@@ -38,6 +38,15 @@ for (const k of Object.keys(mu.pairs)) { const [a, b] = k.split('|'); if (a === 
 
 // 성향 분류: 모든 포지션 챔피언이 그 포지션 성향을 가져야 함
 for (const ln of ['TOP', 'JGL', 'MID', 'ADC', 'SUP']) for (const c of R[ln]) if (!M.laneType(c, ln)) errs.push(`성향 분류 없음: ${ln} ${c}`);
+// 보조 성향: 최대 2개, 그 포지션에서 쓰는 성향 이름, 주 성향과 달라야 하고, 가중치 합은 1
+const vocab = ln => new Set(Object.values(ln === 'SUP' ? M.SUP_TYPE : ln === 'ADC' ? M.ADC_TYPE : M.LANE_TYPE[ln]));
+for (const [ln, m] of Object.entries(M.SUB_TYPE)) for (const [c, subs] of Object.entries(m)) {
+  const p = M.laneType(c, ln), v = vocab(ln);
+  if (!p) errs.push(`보조 성향인데 주 성향 없음: ${ln} ${c}`);
+  if (subs.length > 2) errs.push(`보조 성향 3개 이상: ${ln} ${c}`);
+  for (const k of subs) { if (!v.has(k)) errs.push(`없는 성향 이름: ${ln} ${c} ${k}`); if (k === p) errs.push(`주 성향과 같은 보조: ${ln} ${c}`); }
+  const ts = M.laneTypes(c, ln); if (ts && Math.abs(ts.reduce((a, t) => a + t.w, 0) - 1) > 1e-9) errs.push(`가중치 합 이상: ${ln} ${c}`);
+}
 
 // 바텀 2:2: 우리 원딜·서폿 모든 조합 x 상대 조합 일부
 let botN = 0;
