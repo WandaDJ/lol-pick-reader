@@ -97,27 +97,24 @@ class RiotClient:
 
 # ---------------------------------------------------------------- 수집
 def fetch_players(api: RiotClient, tiers: list[str], divisions: list[str], limit: int) -> list[str]:
-    puuids: list[str] = []
-    for tier in tiers:
-        for div in divisions:
-            page = 1
-            while len(puuids) < limit:
-                rows = api.platform_get(f"/lol/league/v4/entries/RANKED_SOLO_5x5/{tier}/{div}", {"page": page})
-                if not rows:
-                    break
-                puuids.extend(r["puuid"] for r in rows if r.get("puuid"))
-                page += 1
-                if page > 3:  # 구간당 너무 많이 가져가지 않도록
-                    break
-            if len(puuids) >= limit:
+    """티어·단계마다 비슷한 수의 플레이어를 뽑아요 (한 구간에 몰리지 않게)."""
+    buckets = [(t, d) for t in tiers for d in divisions]
+    per = max(1, -(-limit // len(buckets)))
+    seen: set[str] = set()
+    out: list[str] = []
+    for tier, div in buckets:
+        got, page = 0, 1
+        while got < per and page <= 5:
+            rows = api.platform_get(f"/lol/league/v4/entries/RANKED_SOLO_5x5/{tier}/{div}", {"page": page})
+            if not rows:
                 break
-        if len(puuids) >= limit:
-            break
-    seen, out = set(), []
-    for p in puuids:
-        if p not in seen:
-            seen.add(p)
-            out.append(p)
+            for r in rows:
+                p = r.get("puuid")
+                if p and p not in seen and got < per:
+                    seen.add(p)
+                    out.append(p)
+                    got += 1
+            page += 1
     return out[:limit]
 
 
@@ -316,8 +313,8 @@ def main(argv=None):
     ap.add_argument("--region", default="asia")
     ap.add_argument("--tiers", default="PLATINUM,EMERALD", help="쉼표 구분 (IRON~DIAMOND)")
     ap.add_argument("--divisions", default="I,II,III,IV")
-    ap.add_argument("--players", type=int, default=300)
-    ap.add_argument("--per-player", type=int, default=15)
+    ap.add_argument("--players", type=int, default=1200, help="경기 목록을 볼 플레이어 수 (티어·단계별로 나눠 뽑음)")
+    ap.add_argument("--per-player", type=int, default=20)
     ap.add_argument("--max-matches", type=int, default=3000, help="한 번 실행에 새로 받을 최대 경기 수")
     ap.add_argument("--time-budget", type=int, default=260, help="경기 받기에 쓸 최대 시간(분). 넘으면 멈추고 집계")
     ap.add_argument("--keep-patches", type=int, default=3, help="캐시에 남길 최신 패치 수")
