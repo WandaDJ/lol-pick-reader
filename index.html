@@ -277,7 +277,7 @@ details.fold[open] .ssum{display:none}
 
 <datalist id="champs"></datalist>
 
-<script src="matchup.js?v=2026.10.28.4"></script>
+<script src="matchup.js?v=2026.10.28.5"></script>
 <script>
 // [초반(0-10), 중반(10-20), 후반(30+), 한타, 태그] 태그: E 이니시, F 앞라인, P 보호, S 스플릿, M 마법피해, A 물리피해
 const D={
@@ -308,7 +308,7 @@ const PH=["0~10분","10~20분","20~30분","30분 이후"];
 const $=id=>document.getElementById(id);
 const norm=s=>s.replace(/\s+/g,'').toLowerCase();
 // 페이지를 고칠 때마다 올리는 버전 (날짜.번호)
-const PAGE_VERSION='2026.10.28.4';
+const PAGE_VERSION='2026.10.28.5';
 let HELPER_VER=null;
 function updateVer(){
   const el=document.getElementById('verLine');if(!el)return;
@@ -680,12 +680,14 @@ function banned(){return new Set([...helperBans,...manualBans].map(b=>find(b)||b
 // ---- 메타: 최신 패치 통계(data/stats.json)의 승률로 추천 점수를 보정
 // 챔피언 승률은 판수가 적으면 같은 성향(예: 진입형 서폿) 평균 쪽으로, 성향 평균은 50% 쪽으로 당겨서 계산해요.
 // 그래서 표본이 적은 챔피언도 "요즘 탱커 서폿이 강하다" 같은 흐름은 따라가요.
-const CLS_NAME={engage:'진입형',enchanter:'보호형',mage:'견제형',peel:'수비형',allin:'올인형',poke:'견제형',hyper:'후반형',tank:'탱커',fighter:'이니시형',ad:'물리 딜러',ap:'마법 딜러'};
+const CLS_NAME=Object.assign({xtank:'탱커',xfighter:'이니시형',xad:'물리 딜러',xap:'마법 딜러'},(window.MATCHUP&&MATCHUP.TYPE_NAME)||{});
 function classOf(c,laneIdx){
   const ln=LANES[laneIdx];
-  if(hasBot()){if(ln==='SUP'&&MATCHUP.SUP_TYPE[c])return MATCHUP.SUP_TYPE[c];if(ln==='ADC'&&MATCHUP.ADC_TYPE[c])return MATCHUP.ADC_TYPE[c];}
+  if(window.MATCHUP&&MATCHUP.laneType){const k=MATCHUP.laneType(c,ln);if(k)return k;}
+  else if(hasBot()){if(ln==='SUP'&&MATCHUP.SUP_TYPE[c])return MATCHUP.SUP_TYPE[c];if(ln==='ADC'&&MATCHUP.ADC_TYPE[c])return MATCHUP.ADC_TYPE[c];}
+  // 표에 없는 챔피언·포지션(새 챔피언, 드문 포지션)은 태그로 대략
   const tg=(D[c]||[,,,,''])[4];
-  return tg.includes('F')?'tank':tg.includes('E')?'fighter':tg.includes('M')?'ap':'ad';
+  return tg.includes('F')?'xtank':tg.includes('E')?'xfighter':tg.includes('M')?'xap':'xad';
 }
 let CLASS_WR=null;
 function buildClassWr(){

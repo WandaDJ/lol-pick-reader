@@ -227,7 +227,32 @@
     return out.slice(0, 4);
   }
 
-  const api = { gen, handVerdict, jo, bot, synergy, adapt, ADC_TYPE, SUP_TYPE };
+  // ---------------------------------------------------------------- 탑·정글·미드 성향 (직접 분류)
+  const LANE_TYPE = { TOP: {}, JGL: {}, MID: {} };
+  const put = (ln, s) => s.split('/').forEach(g => { const [k, v] = g.split(':'); v.split(',').forEach(n => LANE_TYPE[ln][n] = k); });
+  put('TOP', 'tank:뽀삐,신지드,크산테,쉔,탐 켄치,사이온,말파이트,초가스,오른,문도 박사,마오카이,그라가스' +
+    '/bruiser:일라오이,레넥톤,다리우스,세트,나르,아트록스,볼리베어,우르곳,클레드,올라프,암베사,모데카이저,워윅,가렌,자헨,트런들,오공,판테온' +
+    '/duelist:트린다미어,리븐,이렐리아,카밀,피오라,잭스,요릭,나서스,그웬,야스오,요네,아칼리' +
+    '/ranged:니코,라이즈,리산드라,베인,스웨인,아크샨,하이머딩거,오로라,제이스,퀸,티모,케넨,럼블,블라디미르,케일,갱플랭크');
+  put('JGL', 'jtank:뽀삐,자르반 4세,스카너,세주아니,누누와 윌럼프,아무무,자크,람머스,마오카이,그라가스' +
+    '/warrior:오공,리신,신짜오,렉사이,바이,워윅,브라이어,올라프,트런들,비에고,헤카림,볼리베어,우디르,쉬바나' +
+    '/jassassin:샤코,이블린,케인,키아나,렝가,카직스,녹턴,엘리스,니달리,에코,다이애나,사일러스' +
+    '/farm:마스터 이,킨드레드,그레이브즈,벨베스,릴리아,카서스,피들스틱,그웬,아이번,탈리야');
+  put('MID', 'assassin:나피리,탈론,제드,르블랑,카타리나,피즈,아칼리,키아나,에코,카사딘,다이애나,트리스타나' +
+    '/control:리산드라,애니비아,오리아나,빅토르,아지르,신드라,카시오페아,흐웨이,말자하,아우렐리온 솔,애니,블라디미르,라이즈,오로라,멜,베이가,럼블,탈리야,세라핀,니코,벡스' +
+    '/mpoke:제라스,럭스,벨코즈,직스,조이,코르키,하이머딩거,질리언,브랜드,제이스,스몰더' +
+    '/roam:사일러스,요네,야스오,판테온,갈리오,트위스티드 페이트,아리,아크샨,스웨인');
+  // 포지션 성향 이름 (페이지 표시용)
+  const TYPE_NAME = { engage: '진입형', enchanter: '보호형', mage: '견제형', peel: '수비형', allin: '올인형', poke: '견제형', hyper: '후반형',
+    tank: '탱커', bruiser: '전사', duelist: '결투형', ranged: '원거리·메이지', jtank: '탱커·이니시', warrior: '교전형', jassassin: '암살자', farm: '성장형',
+    assassin: '암살자', control: '한타 메이지', mpoke: '견제 메이지', roam: '로밍형' };
+  function laneType(c, lane) {
+    if (lane === 'SUP') return SUP_TYPE[c] || null;
+    if (lane === 'ADC') return ADC_TYPE[c] || null;
+    return (LANE_TYPE[lane] || {})[c] || null;
+  }
+
+  const api = { gen, handVerdict, jo, bot, synergy, adapt, laneType, LANE_TYPE, TYPE_NAME, ADC_TYPE, SUP_TYPE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MATCHUP = api;
 })(this);

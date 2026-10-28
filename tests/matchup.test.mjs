@@ -36,6 +36,9 @@ for (const lane of ['TOP', 'JGL', 'MID', 'ADC', 'SUP'])
 for (const a of R.SUP) for (const b of R.ADC) if (a !== b) { check(a, b, 'SUP>ADC'); check(b, a, 'ADC>SUP'); }
 for (const k of Object.keys(mu.pairs)) { const [a, b] = k.split('|'); if (a === b) continue; }
 
+// 성향 분류: 모든 포지션 챔피언이 그 포지션 성향을 가져야 함
+for (const ln of ['TOP', 'JGL', 'MID', 'ADC', 'SUP']) for (const c of R[ln]) if (!M.laneType(c, ln)) errs.push(`성향 분류 없음: ${ln} ${c}`);
+
 // 바텀 2:2: 우리 원딜·서폿 모든 조합 x 상대 조합 일부
 let botN = 0;
 const enemies = []; for (let i = 0; i < R.ADC.length; i += 3) for (let j = 0; j < R.SUP.length; j += 4) enemies.push([R.ADC[i], R.SUP[j]]);

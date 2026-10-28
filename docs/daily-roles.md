@@ -15,7 +15,7 @@ python scripts/missing_roles.py
 
 목록에 나온 `챔피언 포지션`마다 세 군데를 채워요.
 
-1. `index.html`의 `const R={...}`에서 그 포지션 줄 끝에 챔피언 이름을 추가해요.
+1. `index.html`의 `const R={...}`에서 그 포지션 줄 끝에 챔피언 이름을 추가하고, `matchup.js`의 그 포지션 성향 표(`LANE_TYPE` 또는 `ADC_TYPE`·`SUP_TYPE`)에도 넣어요.
 2. 기본 세팅 한 줄: `data/setup/top.json`·`jgl.json`·`mid.json`, 원딜·서폿은 `data/setup/bot.json`의 `ADC`·`SUP` 안에 넣어요.
    - 형식: `주문 · 아이템 방향 · 역할` (예: `강타+점멸 · 공격력·물리 관통 아이템 · 6레벨 궁 암살과 카정`)
    - 아이템·룬 이름은 쓰지 않고 방향만 써요. 데이터가 30판 이상 쌓이면 페이지가 경기 데이터로 바꿔 보여줘요.
@@ -25,13 +25,14 @@ python scripts/missing_roles.py
 
 ## 3. 새 챔피언
 
-`새 챔피언: 기본 문장·특성표부터 필요`로 나오면 웹에서 스킬을 조사한 뒤 다섯 군데를 채워요.
+`새 챔피언: 기본 문장·특성표부터 필요`로 나오면 웹에서 스킬을 조사한 뒤 여섯 군데를 채워요.
 
 1. `index.html`의 `const D={...}`: `"이름":[초반, 중반, 후반, 한타, "태그"]` (1~5점, 태그 E 이니시·F 앞라인·P 보호·S 스플릿·M 마법·A 물리)
 2. `index.html`의 `const R={...}`: 통계에 나온 포지션들
 3. `data/traits.json`: `[사거리 1~3, 올인, 견제, 회복, 기동성, CC]` (0~3)
 4. `data/notes/7.json` (없으면 만들기): 기본 문장 7줄. 챔피언 이름은 통계·Data Dragon의 한국어 이름과 같게(띄어쓰기는 상관없음)
-5. 기본 세팅: 2번과 같은 방법. 바텀이면 `matchup.js`의 `ADC_TYPE`·`SUP_TYPE`에도 성향을 추가해요.
+5. 기본 세팅: 2번과 같은 방법.
+6. 성향: `matchup.js`에서 탑·정글·미드는 `LANE_TYPE`(`put('TOP', ...)` 줄), 원딜·서폿은 `ADC_TYPE`·`SUP_TYPE`에 추가해요.
 
 ## 4. 문장 규칙
 
