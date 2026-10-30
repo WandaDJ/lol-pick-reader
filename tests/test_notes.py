@@ -53,13 +53,13 @@ class NotesTest(unittest.TestCase):
 class MissingRolesTest(unittest.TestCase):
     def test_detects_new_lane(self):
         import missing_roles
-        fake = {"champions": {"판테온": {"TOP": {"games": 100}, "JGL": {"games": 40}},
+        fake = {"champions": {"유미": {"SUP": {"games": 100}, "JGL": {"games": 40}},
                               "가렌": {"TOP": {"games": 100}, "MID": {"games": 5}}}}
         rows = missing_roles.find(fake)
         keys = {(r["champion"], r["lane"]) for r in rows}
-        self.assertIn(("판테온", "JGL"), keys)
+        self.assertIn(("유미", "JGL"), keys)
         self.assertNotIn(("가렌", "MID"), keys)   # 판수가 적으면 무시
-        self.assertNotIn(("판테온", "TOP"), keys)  # 이미 있는 포지션
+        self.assertNotIn(("유미", "SUP"), keys)  # 이미 있는 포지션
 
 
 if __name__ == "__main__":
