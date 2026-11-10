@@ -48,6 +48,25 @@ for (const [ln, m] of Object.entries(M.SUB_TYPE)) for (const [c, subs] of Object
   const ts = M.laneTypes(c, ln); if (ts && Math.abs(ts.reduce((a, t) => a + t.w, 0) - 1) > 1e-9) errs.push(`가중치 합 이상: ${ln} ${c}`);
 }
 
+// 서폿 상황 픽: 대표 상황에서 기대한 방향으로 점수가 나오는지
+{
+  const sp = (c, al, en) => M.supPick(c, al, en, D);
+  const N = [null, null, null, null, null];
+  const chk = (name, r, sign) => { if (!(sign > 0 ? r.score > 0 : r.score < 0)) errs.push(`서폿 상황 픽: ${name} (${r.score})`); };
+  chk('레오나 vs 징크스', sp('레오나', N, [null, null, null, '징크스', null]), 1);
+  chk('레오나 vs 이즈리얼+잔나', sp('레오나', N, [null, null, null, '이즈리얼', '잔나']), -1);
+  chk('노틸러스 vs 카이사', sp('노틸러스', N, [null, null, null, '카이사', null]), 1);
+  chk('알리스타 vs 레오나', sp('알리스타', N, [null, null, null, null, '레오나']), 1);
+  chk('브라움 vs 블리츠', sp('브라움', N, [null, null, null, '징크스', '블리츠크랭크']), 1);
+  chk('브라움 vs 브랜드', sp('브라움', N, [null, null, null, null, '브랜드']), -1);
+  chk('쉔 + 우리 피오라', sp('쉔', ['피오라', null, null, null, null], [null, null, null, '진', null]), 1);
+  chk('쉔 vs 제라스', sp('쉔', N, [null, null, null, null, '제라스']), -1);
+  chk('렐 vs 탱커 둘', sp('렐', N, ['오른', '세주아니', null, null, null]), 1);
+  chk('쓰레쉬 블라인드', sp('쓰레쉬', N, N), 1);
+  for (const c of R.SUP) for (const e of [[null, null, null, '징크스', '레오나'], N]) {
+    const r = sp(c, N, e); if (Math.abs(r.score) > 5 || r.lines.some(([t]) => /undefined|null/.test(t))) errs.push(`서폿 상황 픽 이상: ${c}`);
+  }
+}
 // 바텀 2:2: 우리 원딜·서폿 모든 조합 x 상대 조합 일부
 let botN = 0;
 const enemies = []; for (let i = 0; i < R.ADC.length; i += 3) for (let j = 0; j < R.SUP.length; j += 4) enemies.push([R.ADC[i], R.SUP[j]]);

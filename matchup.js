@@ -283,7 +283,54 @@
     return subs.length ? [{ k: p, w: 0.8 }, ...subs.map(k => ({ k, w: 0.2 / subs.length }))] : [{ k: p, w: 1 }];
   }
 
-  const api = { gen, handVerdict, jo, bot, synergy, adapt, laneType, laneTypes, SUB_TYPE, LANE_TYPE, TYPE_NAME, ADC_TYPE, SUP_TYPE };
+  // ---------------------------------------------------------------- 서폿 상황 픽 (이런 판에 이 서폿)
+  // 성향 상성(SUP_TYPE 삼각형)·원딜 궁합(SYN)과 겹치지 않는, 챔피언 키트에서 나오는 상황만 넣어요.
+  const set = s => new Set(s.split(','));
+  const ADC_NOESC = set('징크스,진,애쉬,미스 포츈,코그모,바루스,아펠리오스,세나');           // 탈출기가 약한 원딜
+  const ADC_MOBILE = set('이즈리얼,카이사,자야,루시안,베인,사미라,칼리스타,트리스타나,제리,닐라,스몰더'); // 빠져나가는 원딜
+  const ADC_AA = set('사미라,드레이븐,루시안,닐라,칼리스타,트리스타나');                    // 평타로 붙어 싸우는 원딜
+  const ADC_PROJ = set('케이틀린,진,이즈리얼,바루스,애쉬');                                 // 투사체로 견제하는 원딜
+  const SUP_HOOK = set('쓰레쉬,블리츠크랭크,파이크,노틸러스,모르가나,럭스');                 // 투사체 끌기·속박
+  const SUP_ENGAGE = set('레오나,노틸러스,렐,파이크,알리스타,라칸,블리츠크랭크,쓰레쉬');      // 들어오는 서폿
+  const SUP_SHIELD = set('룰루,잔나,카르마,세라핀,밀리오,아이번');                           // 보호막 서폿
+  const SUP_GROUND = set('브랜드,자이라,제라스');                                           // 바닥 범위 견제
+  const SUP_DISENGAGE = set('잔나,브라움,알리스타,탐 켄치');                                // 진입을 끊는 서폿
+  // allies·enemies: [탑, 정글, 미드, 원딜, 서폿] (모르면 null). 반환 {score, lines:[[문장, 점수]]}
+  function supPick(c, allies, enemies, D) {
+    const eA = enemies[3], eS = enemies[4], out = [];
+    const add = (v, t) => out.push([t, v]);
+    const tag = n => ((D && D[n]) || [, , , , ''])[4] || '';
+    if (c === '레오나' || c === '블리츠크랭크') {
+      if (eA && ADC_NOESC.has(eA)) add(2, `${eA} 탈출기 약함 · 한 번 붙으면 못 빠져나감`);
+      if (c === '레오나' && eA && ADC_MOBILE.has(eA)) add(-1.5, `${eA} 탈출기로 레오나 진입을 피함`);
+    }
+    if (c === '쓰레쉬' && eA && ADC_NOESC.has(eA)) add(1, `${eA} 탈출기 약해 끌기 각이 많음`);
+    if (c === '노틸러스' && eA && ADC_MOBILE.has(eA)) add(2, `지정형 궁으로 ${eA}도 확실히 묶음`);
+    if (c === '블리츠크랭크' && eS && SUP_SHIELD.has(eS)) add(1.5, `궁으로 ${eS} 보호막 지우기`);
+    if ((c === '알리스타' || c === '브라움') && eS && SUP_ENGAGE.has(eS)) add(c === '브라움' ? 1.5 : 2, `${eS} 진입을 받아치기 좋음`);
+    if (c === '브라움') {
+      if ((eS && SUP_HOOK.has(eS)) || (eA && ADC_PROJ.has(eA))) add(1.5, `방패로 ${[eS && SUP_HOOK.has(eS) ? eS : null, eA && ADC_PROJ.has(eA) ? eA : null].filter(Boolean).join('·')} 투사체 막기`);
+      if (eS && SUP_GROUND.has(eS)) add(-1.5, `${eS} 바닥 견제는 방패로 못 막음`);
+    }
+    if ((c === '레오나' || c === '렐') && eS && SUP_DISENGAGE.has(eS)) add(-1.5, `${eS}에게 진입이 끊기기 쉬움`);
+    if (c === '렐') {
+      const tanks = enemies.filter(n => n && tag(n).includes('F'));
+      if (tanks.length >= 2) add(2, `상대 앞라인(${tanks.slice(0, 2).join('·')}) 방어력 빼앗기`);
+    }
+    if (c === '쉔') {
+      const carry = [[0, 'TOP', ['duelist']], [2, 'MID', ['mcarry', 'assassin']], [1, 'JGL', ['farm']]]
+        .map(([i, ln, ks]) => allies[i] && ks.includes(laneType(allies[i], ln)) ? allies[i] : null).filter(Boolean);
+      if (carry.length) add(2, `궁으로 지켜 줄 캐리 ${carry.join('·')}`);
+      if (eA && ADC_AA.has(eA)) add(1.5, `W로 ${eA} 평타 막기`);
+      if (eS && (SUP_GROUND.has(eS) || SUP_TYPE[eS] === 'mage')) add(-1.5, `${eS} 원거리 견제에 약함`);
+    }
+    if (c === '탐 켄치' && eS && (SUP_HOOK.has(eS) || SUP_ENGAGE.has(eS))) add(1.5, `삼키기로 ${eS}에게 잡힌 원딜 구출`);
+    if ((c === '쓰레쉬' || c === '알리스타') && !eA && !eS) add(1.5, '진입·보호 둘 다 돼서 먼저 골라도 안전');
+    const score = Math.max(-5, Math.min(5, out.reduce((a, x) => a + x[1], 0)));
+    return { score, lines: out };
+  }
+
+  const api = { gen, handVerdict, jo, bot, synergy, adapt, laneType, laneTypes, SUB_TYPE, supPick, LANE_TYPE, TYPE_NAME, ADC_TYPE, SUP_TYPE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MATCHUP = api;
 })(this);
