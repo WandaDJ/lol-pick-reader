@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import random
 import os
 import sys
 import time
@@ -102,11 +103,17 @@ def fetch_players(api: RiotClient, tiers: list[str], divisions: list[str], limit
     per = max(1, -(-limit // len(buckets)))
     seen: set[str] = set()
     out: list[str] = []
+    rng = random.Random(datetime.now(timezone.utc).strftime("%Y-%m-%d"))
     for tier, div in buckets:
-        got, page = 0, 1
-        while got < per and page <= 5:
+        # 매일 같은 1페이지만 보면 같은 플레이어·같은 경기만 다시 나와서, 날마다 다른 페이지에서 시작해요
+        got, start = 0, rng.randint(1, 30)
+        page = start
+        while got < per and page <= start + 4:
             rows = api.platform_get(f"/lol/league/v4/entries/RANKED_SOLO_5x5/{tier}/{div}", {"page": page})
             if not rows:
+                if page > 1 and got == 0:  # 그 단계 페이지가 적으면 1페이지부터 다시
+                    start = page = 1
+                    continue
                 break
             for r in rows:
                 p = r.get("puuid")

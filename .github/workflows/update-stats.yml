@@ -56,5 +56,10 @@ jobs:
             echo "변경 없음"
           else
             git commit -m "통계 갱신 $(date -u +%Y-%m-%d)"
-            git push
+            # 수집하는 1시간 사이에 다른 커밋(문장 추가 예약 작업 등)이 올라오면 push가 거절돼요. 받아서 다시 올려요.
+            for i in 1 2 3; do
+              git pull --rebase origin main && git push && exit 0
+              sleep 10
+            done
+            exit 1
           fi
