@@ -67,6 +67,12 @@ button:hover{border-color:var(--brass)}
 .big b{font-family:var(--display);font-weight:400;font-size:30px}
 .pill{font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;border:1px solid currentColor}
 .list{margin:0;padding-left:18px;display:grid;gap:4px;font-size:14px}
+.duobox{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.duocols{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.duocols>div{min-width:0}
+.duolist{margin:4px 0 0;padding-left:1.4em;font-size:13px;line-height:1.7;font-variant-numeric:tabular-nums}
+.duolist .mine{font-weight:600}
+.duolist .g{color:var(--muted);font-family:var(--mono)}
 .vs{display:grid;grid-template-columns:52px minmax(0,1fr) 40px;gap:8px;align-items:center;font-size:13px}
 .vs .bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden}
 .vs .bar i{display:block;height:100%;border-radius:4px}
@@ -214,6 +220,14 @@ details.fold[open] .ssum{display:none}
     <div class="ranks" id="ranks"></div>
     <p class="note" id="metaNote"></p>
     <p class="note" id="styleNote"></p>
+    <div class="duobox" id="duoBox" hidden>
+      <span class="label" id="duoTitle">바텀 듀오 데이터</span>
+      <div class="duocols">
+        <div><p class="note" id="duoMateHead"></p><ol class="duolist" id="duoMate"></ol></div>
+        <div><p class="note" id="duoVsHead"></p><ol class="duolist" id="duoVs"></ol></div>
+      </div>
+      <p class="note" id="duoNote"></p>
+    </div>
     <div><button type="button" id="copyStyle" hidden>분석용 복사</button> <span class="note" id="copyMsg"></span></div>
     <p class="note">내 자리에 각 챔피언을 넣어보고 구간별 우세, 한타, 운영 난이도, 상대 라이너와의 라인전을 합쳐 순위를 매겨요. 이미 픽된 챔피언은 빠지고, 챔프폭은 이 브라우저에 저장돼요.</p>
   
@@ -277,7 +291,7 @@ details.fold[open] .ssum{display:none}
 
 <datalist id="champs"></datalist>
 
-<script src="matchup.js?v=2026.11.16.1"></script>
+<script src="matchup.js?v=2026.11.17.1"></script>
 <script>
 // [초반(0-10), 중반(10-20), 후반(30+), 한타, 태그] 태그: E 이니시, F 앞라인, P 보호, S 스플릿, M 마법피해, A 물리피해
 const D={
@@ -308,7 +322,7 @@ const PH=["0~10분","10~20분","20~30분","30분 이후"];
 const $=id=>document.getElementById(id);
 const norm=s=>s.replace(/\s+/g,'').toLowerCase();
 // 페이지를 고칠 때마다 올리는 버전 (날짜.번호)
-const PAGE_VERSION='2026.11.16.1';
+const PAGE_VERSION='2026.11.17.1';
 let HELPER_VER=null;
 function updateVer(){
   const el=document.getElementById('verLine');if(!el)return;
@@ -319,6 +333,8 @@ function updateVer(){
 }
 let NAMES=Object.keys(D);
 let STATS=null,META=null;
+// 바텀 듀오 실제 데이터 (data/bot-report.json): 원딜+서폿 듀오 승률, 듀오 대 듀오 맞대결
+let DUO=null,DUOVS=null,BOTMETA=null;
 function fillNames(){NAMES=Object.keys(D);$('champs').innerHTML=NAMES.slice().sort((a,b)=>a.localeCompare(b,'ko')).map(k=>`<option value="${k}">`).join('');}
 fillNames();
 const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
@@ -672,6 +688,7 @@ function render(){
   renderBanRecs(ctx,foe);
   renderMetaNote();
   renderStyleNote();
+  try{renderDuoBox(an,en);}catch(e){console.error('바텀 듀오',e);$('duoBox').hidden=true;}
   renderBanChips();
 }
 
@@ -819,7 +836,11 @@ function scoreCand(c,ctx,foe){
     const mate=MY===4?ctx.others[3]:ctx.others[4];
     const pair=MY===4?[mate,c]:[c,mate];
     const s=mate?MATCHUP.synergy(pair[0],pair[1]):null;
-    if(s){lanePart+=(s.v-1)*3;w.push(s.v>=2?`${mate}와 궁합 좋음${s.duo?' (자주 쓰는 조합)':''}`.replace(`${mate}와`,jo(mate,'과','와')):s.v===1?`${jo(mate,'과','와')} 궁합 보통`:`<span class="risk">${jo(mate,'과','와')} 궁합 안 맞음</span>`);}
+    const ds=mate?duoStat(pair[0],pair[1]):null;
+    // 실제 듀오 데이터가 50판 이상이면 이론 궁합 대신 데이터를 써요
+    if(ds){lanePart+=Math.max(-5,Math.min(5,(ds.wr-0.5)*80));w.push(ds.raw>=0.52?`${mate}와 실제 듀오 승률 ${Math.round(ds.raw*1000)/10}% (${ds.games}판)`.replace(`${mate}와`,jo(mate,'과','와')):ds.raw<=0.48?`<span class="risk">${jo(mate,'과','와')} 실제 듀오 승률 ${Math.round(ds.raw*1000)/10}% (${ds.games}판)</span>`:`${jo(mate,'과','와')} 실제 듀오 승률 ${Math.round(ds.raw*1000)/10}% (${ds.games}판)`);}
+    if(mate&&ctx.en[3]&&ctx.en[4]){const dv=duoVsStat(pair[0],pair[1],ctx.en[3],ctx.en[4]);if(dv){lanePart+=Math.max(-4,Math.min(4,(dv.wr-0.5)*60));w.push(`vs ${ctx.en[3]}+${ctx.en[4]} 듀오 맞대결 ${Math.round(dv.raw*100)}% (${dv.games}판)`);}}
+    if(s&&!(ds&&ds.games>=50)){lanePart+=(s.v-1)*3;w.push(s.v>=2?`${mate}와 궁합 좋음${s.duo?' (자주 쓰는 조합)':''}`.replace(`${mate}와`,jo(mate,'과','와')):s.v===1?`${jo(mate,'과','와')} 궁합 보통`:`<span class="risk">${jo(mate,'과','와')} 궁합 안 맞음</span>`);}
     if(mate&&ctx.en[3]&&ctx.en[4]){const b=MATCHUP.bot(pair,[ctx.en[3],ctx.en[4]],D);if(b.known){lanePart+=b.score*1.5;w.push(`바텀 2:2 ${['불리','비슷','유리'][b.verdict+1]}`);}}
   }
   // 서폿 상황 픽: 상대 원딜 탈출기, 상대 서폿 종류, 우리 캐리 등 (예: 탈출기 없는 원딜엔 레오나, 진입 서폿엔 알리스타)
@@ -972,6 +993,65 @@ function sample(){
 $('sample').addEventListener('click',sample);
 $('clear').addEventListener('click',()=>setAll([],[],[]));
 sample();
+async function loadBotReport(){
+  try{
+    const res=await fetch('data/bot-report.json',{cache:'no-cache'});
+    if(!res.ok)throw new Error(res.status);
+    const j=await res.json();
+    DUO={};DUOVS={};BOTMETA=j.meta||{};
+    for(const [k,v] of Object.entries(j.duos||{})){const [a,s]=k.split('|');DUO[norm(a)+'|'+norm(s)]=v;}
+    for(const [k,v] of Object.entries(j.duoVs||{})){const [x,y]=k.split(' vs ');const f=z=>z.split('|').map(norm).join('|');DUOVS[f(x)+' vs '+f(y)]=v;}
+    render();
+  }catch(e){DUO=null;DUOVS=null;console.warn('바텀 듀오 데이터 없음',e);}
+}
+// 판수가 적을수록 50% 쪽으로 당긴 듀오 승률
+function duoStat(adc,sup){
+  if(!DUO||!adc||!sup)return null;const v=DUO[norm(adc)+'|'+norm(sup)];
+  if(!v||v.games<20)return null;
+  return {wr:(v.games*v.winRate+0.5*50)/(v.games+50),raw:v.winRate,games:v.games,gd10:v.gd10};
+}
+function duoVsStat(adc,sup,ea,es){
+  if(!DUOVS||!adc||!sup||!ea||!es)return null;const v=DUOVS[[adc,sup].map(norm).join('|')+' vs '+[ea,es].map(norm).join('|')];
+  if(!v||v.games<6)return null;
+  return {wr:(v.games*v.winRate+0.5*20)/(v.games+20),raw:v.winRate,games:v.games};
+}
+function renderDuoBox(an,en){
+  const box=$('duoBox');
+  if(!(MY===3||MY===4)||!DUO){box.hidden=true;return;}
+  box.hidden=false;
+  const sup=MY===4,mate=sup?an[3]:an[4],ea=en[3],es=en[4];
+  const myLane=sup?'SUP':'ADC',role=sup?'서폿':'원딜';
+  const taken=new Set([...an,...en].filter(Boolean).map(norm));(banned()||new Set()).forEach(b=>taken.add(norm(b)));
+  const pool=new Set(poolList().map(norm));
+  const cands=R[myLane].filter(c=>!taken.has(norm(c))||norm(c)===norm(an[MY]||''));
+  const li=(name,wr,g,extra)=>`<li${pool.has(norm(name))?' class="mine"':''}>${name} <b style="color:${stCol(wr*100)}">${Math.round(wr*1000)/10}%</b> <span class="g">${g}판${extra||''}</span></li>`;
+  // 1) 아군 원딜(서폿)과 잘 맞는 내 포지션 챔피언
+  if(mate){
+    const rows=cands.map(c=>[c,sup?duoStat(mate,c):duoStat(c,mate)]).filter(z=>z[1]&&z[1].games>=30).sort((a,b)=>b[1].wr-a[1].wr);
+    $('duoMateHead').textContent=`아군 ${mate}와 같이 했을 때 승률 높은 ${role} (판수까지 반영한 순서)`.replace(`${mate}와`,jo(mate,'과','와'));
+    $('duoMate').innerHTML=rows.length?rows.slice(0,6).map(([c,d])=>li(c,d.raw,d.games)).join(''):`<li>${jo(mate,'과','와')} 30판 이상 같이 나온 ${role}가 아직 없어요</li>`;
+  }else{
+    $('duoMateHead').textContent=`아군 ${sup?'원딜':'서폿'}을 입력하면 그 챔피언과 잘 맞는 ${role}가 나와요`;
+    $('duoMate').innerHTML='';
+  }
+  // 2) 상대 바텀 기준
+  if(ea&&es){
+    const rows=cands.map(c=>{const pair=sup?[mate,c]:[c,mate];
+      if(mate){const v=duoVsStat(pair[0],pair[1],ea,es);return v?[c,v,'듀오 맞대결']:null;}
+      return null;}).filter(Boolean);
+    let html='';
+    if(rows.length){html=rows.sort((a,b)=>b[1].wr-a[1].wr).slice(0,5).map(([c,v])=>li(c,v.raw,v.games,' · 듀오 맞대결')).join('');}
+    const foe=sup?es:ea;
+    const lane=rows.length<3?cands.map(c=>[c,matchup(c,foe,MY)]).filter(z=>z[1]&&z[1].games>=20).sort((a,b)=>b[1].wr-a[1].wr).slice(0,6-rows.length):[];
+    html+=lane.map(([c,m])=>li(c,m.wr,m.games,` · vs ${foe}`)).join('');
+    $('duoVsHead').textContent=`상대 ${ea}+${es} 상대로 좋은 ${role}`;
+    $('duoVs').innerHTML=html||`<li>상대 바텀 기준 데이터가 아직 부족해요</li>`;
+  }else{
+    $('duoVsHead').textContent=`상대 원딜·서폿이 다 나오면 그 바텀 상대로 좋은 ${role}가 나와요`;
+    $('duoVs').innerHTML='';
+  }
+  $('duoNote').textContent=`실제 경기 ${BOTMETA.matches||'?'}판(패치 ${Object.keys(BOTMETA.patches||{}).join(', ')}) 기준이에요. 굵은 이름은 내 챔프폭이에요. 듀오 맞대결은 판수가 적어 같은 듀오가 6판 이상 만난 경우만 보여주고, 모자라면 맞라이너 상성으로 채워요.`;
+}
 async function loadStats(){
   try{
     const res=await fetch('data/stats.json',{cache:'no-cache'});
@@ -999,7 +1079,7 @@ async function loadStats(){
     $('dataStatus').textContent='데이터: 통계 파일이 아직 없어 추정 표 사용 중';
   }
 }
-loadStats();
+loadStats();loadBotReport();
 updateVer();
 // 추정 표에 없는 챔피언(새 챔피언 등)은 Riot 공식 챔피언 목록에서 역할 태그로 대략 추가
 async function loadRoster(){
